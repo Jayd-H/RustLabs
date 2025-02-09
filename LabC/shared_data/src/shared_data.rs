@@ -19,4 +19,5 @@ impl SharedData {
     pub fn print(&self) {
         println!("SharedData: value = {}", self.value)
     }
+    
 }

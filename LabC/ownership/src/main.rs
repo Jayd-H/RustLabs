@@ -5,12 +5,6 @@ struct Person {
 }
 
 impl Person {
-    fn new_default() -> Person {
-        Person {
-            name: "Joe Bloggs".to_string(),
-            age: 25
-        }
-    }
 
     fn new(name_param: &str, age_param: u32) -> Person {
         Person {
@@ -21,11 +15,29 @@ impl Person {
 }
 
 fn main() {
-    let p1 = Person::new("Jane", 30);
+    let mut p1 = Person::new("Jane", 30);
 
-    print_person(p1);
+    let r1 = & p1;
+    let r2 = & p1;
+
+    print_person(r1);
+    print_person(r2);
+
+    let r3 = &mut p1;
+
+    increment_age(r3);
+
+    print_person(r3);
+
+    increment_age(r3);
+
+    print_person(&r3);
 }
 
-fn print_person(p: Person) {
+fn print_person(p: &Person) {
     println!("{} is {} years old", p.name, p.age);
+}
+
+fn increment_age(p: &mut Person) {
+    p.age = p.age + 1;
 }
