@@ -591,3 +591,373 @@ error: could not compile `shared_data` (bin "shared_data") due to 1 previous err
 ## Lab C Reflection
 
 Despite already having some knowledge in Rust before this due to personal projects over the years. I appreciate these labs for giving me time to reflect over what I know and even gain a greater understanding of them. I appreciate the parrallels that are drawn between C++ and Rust, highlighting where they differ from eachother in certain areas. I am excited to see how this knowledge will fit in when it comes to multi-threading. Despite still being a novice, I feel better about my Rust ability after the Lab.
+
+# Lab D
+
+## Q1
+
+In the lecture and Lab C we looked at Rust class called `SharedData`. This class is used for sharing of data across two or more threads
+
+```Rust
+pub struct SharedData {
+    value: u32
+}
+
+impl SharedData {
+    pub fn new() -> SharedData {
+        SharedData {
+            value: 0
+        }
+    }
+
+    pub fn update(&mut self) {
+        let local_value = self.value;
+        std::thread::sleep(std::time::Duration::new(1,0));
+        self.value = local_value + 1;
+    }
+
+    pub fn print(&self) {
+        println!("SharedData: value = {}", self.value)
+    }
+}
+```
+
+In Lab C you created a new thread function which takes `SharedData` as a parameter and calls the `update` and `print` functions.
+
+When you tried to move the `print` function from your thread function to the main program. You would have experienced ownership issues.
+
+These cannot be resolved by the ownership techniques we learnt earlier. To solve this particular problem will require some new Rust techniques. This lab begins by exploring one of these, namely: reference counters.
+
+Create a new Rust folder and add the following code to main.rs
+
+```Rust
+struct Aircraft<'a> {
+    name: String,
+    engines: Vec<&'a Engine>,
+}
+
+impl Aircraft<'_> {
+    pub fn new(name_param: &str) -> Aircraft {
+        Aircraft {
+            name: name_param.to_string(),
+            engines: Vec::new()
+        }
+    }
+}
+
+struct Engine {
+    name: String,
+}
+
+impl Engine {
+    pub fn new(name_param: &str) -> Engine {
+        Engine {
+            name: name_param.to_string(),
+        }
+    }
+}
+
+fn main() {
+    let engine1 = Engine::new( "General Electric F404" );
+    let engine2 = Engine::new( "General Electric F404" );
+    let mut f18 = Aircraft::new( "F-18" );
+
+    f18.engines.push (&engine1);
+    f18.engines.push (&engine2);
+
+    println! ("Aircraft: {} has a {} and {} ", f18.name, f18.engines[0].name, f18.engines[1].name );
+}
+```
+
+This code creates two structs `Aircraft` and `Engine`. `Aircraft` contains a vector of references that can hold a number of engines.
+
+In `main` we create two `Engine` objects and an `Aircraft` object and the then link them together.
+
+Examine the code and make sure you understand the syntax.
+
+Note: The strange `'a` notation attached to the reference is called a lifetime parameter. It allows the compiler to determine whether all references are going to stay "alive" at least as long as the "parent". In our example, it ensure that the engines will exist at least as long as the aircraft. What would happen if this was not the case?
+
+Try to expand the code to include a data member in `Engine` that links to the `Aircraft`.
+
+The limitation with the current code is that due to ownership restrictions it is not possible to link the `Aircraft` to an `Engine`
+
+## A1
+
+Adding an aircraft data member to our engine struct like this throws an error:
+
+```Rust
+
+struct Engine {
+    name: String,
+    aircraft: &Aircraft,
+}
+
+```
+
+```
+
+PS D:\Files\Documents\AProjects\Rust\ParallelAndConcurrentProgrammingLabs\LabD\Aircraft> cargo run
+   Compiling Aircraft v0.1.0 (D:\Files\Documents\AProjects\Rust\ParallelAndConcurrentProgrammingLabs\LabD\Aircraft)
+error[E0106]: missing lifetime specifier
+  --> src\main.rs:17:15
+   |
+17 |     aircraft: &Aircraft,
+   |               ^ expected named lifetime parameter
+   |
+help: consider introducing a named lifetime parameter
+   |
+15 ~ struct Engine<'a> {
+16 |     name: String,
+17 ~     aircraft: &'a Aircraft,
+   |
+
+error[E0106]: missing lifetime specifier
+  --> src\main.rs:17:16
+   |
+17 |     aircraft: &Aircraft,
+   |                ^^^^^^^^ expected named lifetime parameter
+   |
+help: consider introducing a named lifetime parameter
+   |
+15 ~ struct Engine<'a> {
+16 |     name: String,
+17 ~     aircraft: &Aircraft<'a>,
+   |
+
+error[E0063]: missing field `aircraft` in initializer of `Engine`
+  --> src\main.rs:22:9
+   |
+22 |         Engine {
+   |         ^^^^^^ missing `aircraft`
+
+Some errors have detailed explanations: E0063, E0106.
+For more information about an error, try `rustc --explain E0063`.
+error: could not compile `Aircraft` (bin "Aircraft") due to 3 previous errors
+
+```
+
+This is because we get into a circular reference situation, wherein Aircraft refers to Engine which refers back to Aircraft. Because of Rust's ownership rules, this does not compile. To solve this, we need to implement reference counting.
+
+## Q2
+
+Let's rewrite the code and use reference counters.
+
+Create a new Rust folder and add the following code to main.rs
+
+```Rust
+use std::rc::Rc;
+
+struct Aircraft {
+    name: String,
+    engines: Vec<Rc<Engine>>,
+}
+
+impl Aircraft {
+    pub fn new(name_param: &str) -> Aircraft {
+        Aircraft {
+            name: name_param.to_string(),
+            engines: Vec::new()
+        }
+    }
+}
+
+struct Engine {
+    name: String,
+}
+
+impl Engine {
+    pub fn new(name_param: &str) -> Engine {
+        Engine {
+            name: name_param.to_string(),
+        }
+    }
+}
+
+fn main() {
+    let engine1 = Rc::new(Engine::new( "General Electric F404" ));
+    let engine2 = Rc::new(Engine::new( "General Electric F404" ));
+
+    let mut f18 = Aircraft::new( "F-18" );
+
+    f18.engines.push (engine1.clone());
+    f18.engines.push (engine2.clone());
+
+    println! ("Aircraft: {} has a {} and {}", f18.name, f18.engines[0].name , f18.engines[1].name );
+    println! ("Engine: {} ", engine1.name );
+    println! ("Engine: {} ", engine2.name );
+}
+```
+
+This code uses `RC` (or reference counters) to act as smart pointers to the objects. We have removed the need to use references and lifetime parameters. Arguable this code is also now easier to understand.
+
+Examine the code.
+
+Use your knowledge of the Rust ownership model to explain what is happening with the reference counters and why we do not need to pass them as references.
+
+Remove the `clone()` method from this line
+
+```Rust
+f18.engines.push (engine1.clone());
+```
+
+Can you explain why this program now fails to build?
+
+Add a new boolean data member `requires_service` to `Engine`.
+
+Then add a new method `service(&mut self)` to `Engine`. This method will just set the `requires_service` data member to `false`.
+
+Now test your code with by adding the following to `main()`
+
+```Rust
+    let mut engine3 = Engine::new( "General Electric F404" );
+    engine3.service();
+```
+
+You should be able to service engine3.
+
+You will get a build error if you try and service engine2, which is accessed through an `rc`.
+
+Again, using your knowledge of the Rust ownership module can you explain why the error is occurring?
+
+This is a limitation of reference counters. We'll look to overcome this limitation in future labs.
+
+## A2
+
+Through using RC, a kind of smart pointer, it enables us to have the circular connection we wanted in the previous question. RC keeps track of how many references exist to a value, and when the last reference is dropped, the value is cleaned up.
+
+If we remove the `clone` function from both of these lines, leaving us with this:
+
+```Rust
+
+f18.engines.push (engine1);
+f18.engines.push (engine2);
+
+```
+
+We get this compiler error:
+
+```
+
+PS D:\Files\Documents\AProjects\Rust\ParallelAndConcurrentProgrammingLabs\LabD\Aircraft> cargo run
+   Compiling Aircraft v0.1.0 (D:\Files\Documents\AProjects\Rust\ParallelAndConcurrentProgrammingLabs\LabD\Aircraft)
+error[E0382]: borrow of moved value: `engine1`
+    --> src\main.rs:39:30
+     |
+30   |     let engine1 = Rc::new(Engine::new( "General Electric F404" ));
+     |         ------- move occurs because `engine1` has type `Rc<Engine>`, which does not implement the `Copy` trait
+...
+35   |     f18.engines.push (engine1);
+     |                       ------- value moved here
+...
+39   |     println! ("Engine: {} ", engine1.name );
+     |                              ^^^^^^^^^^^^ value borrowed here after move
+     |
+     = note: borrow occurs due to deref coercion to `Engine`
+note: deref defined here
+    --> C:\Users\Jayd\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library\alloc\src\rc.rs:2224:5
+     |
+2224 |     type Target = T;
+     |     ^^^^^^^^^^^
+help: clone the value to increment its reference count
+     |
+35   |     f18.engines.push (engine1.clone());
+     |                              ++++++++
+
+error[E0382]: borrow of moved value: `engine2`
+    --> src\main.rs:40:30
+     |
+31   |     let engine2 = Rc::new(Engine::new( "General Electric F404" ));
+     |         ------- move occurs because `engine2` has type `Rc<Engine>`, which does not implement the `Copy` trait
+...
+36   |     f18.engines.push (engine2);
+     |                       ------- value moved here
+...
+40   |     println! ("Engine: {} ", engine2.name );
+     |                              ^^^^^^^^^^^^ value borrowed here after move
+     |
+     = note: borrow occurs due to deref coercion to `Engine`
+note: deref defined here
+    --> C:\Users\Jayd\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library\alloc\src\rc.rs:2224:5
+     |
+2224 |     type Target = T;
+     |     ^^^^^^^^^^^
+help: clone the value to increment its reference count
+     |
+36   |     f18.engines.push (engine2.clone());
+     |                              ++++++++
+
+For more information about this error, try `rustc --explain E0382`.
+error: could not compile `Aircraft` (bin "Aircraft") due to 2 previous errors
+
+```
+
+The purpose of the `clone()` function here is not to clone the particular Engine, but rather to create a new reference to the same engine. When we remove it, `push` takes ownership of the Engine, therefore not allowing us to print the Engine's name. That's why we get the error `` error[E0382]: borrow of moved value: `engine2` ``.
+
+If we add in the functionality of Engines having a 'service', we end up with this code.
+
+```Rust
+
+struct Engine {
+    name: String,
+    requires_service: bool,
+}
+
+impl Engine {
+    pub fn new(name_param: &str) -> Engine {
+        Engine {
+            name: name_param.to_string(),
+            requires_service: true,
+        }
+    }
+    pub fn service(&mut self) {
+        self.requires_service = false;
+    }
+}
+
+fn main() {
+    let engine1 = Rc::new(Engine::new( "General Electric F404" ));
+    let engine2 = Rc::new(Engine::new( "General Electric F404" ));
+
+    let mut engine3 = Engine::new( "General Electric F404" );
+    engine3.service();
+
+    let mut f18 = Aircraft::new( "F-18" );
+
+    f18.engines.push (engine1.clone());
+    f18.engines.push (engine2.clone());
+
+    println! ("Aircraft: {} has a {} and {}", f18.name, f18.engines[0].name , f18.engines[1].name );
+    println! ("Engine: {} ", engine1.name );
+    println! ("Engine: {} ", engine2.name );
+
+    println! ("Engine: {} requires service: {}", engine3.name, engine3.requires_service );
+
+    engine2.service();
+}
+
+```
+
+However, this throws an error.
+
+```
+
+PS D:\Files\Documents\AProjects\Rust\ParallelAndConcurrentProgrammingLabs\LabD\Aircraft> cargo run
+   Compiling Aircraft v0.1.0 (D:\Files\Documents\AProjects\Rust\ParallelAndConcurrentProgrammingLabs\LabD\Aircraft)
+error[E0596]: cannot borrow data in an `Rc` as mutable
+  --> src\main.rs:52:5
+   |
+52 |     engine2.service();
+   |     ^^^^^^^ cannot borrow as mutable
+   |
+   = help: trait `DerefMut` is required to modify through a dereference, but it is not implemented for `Rc<Engine>`
+
+For more information about this error, try `rustc --explain E0596`.
+error: could not compile `Aircraft` (bin "Aircraft") due to 1 previous error
+
+```
+
+'engine3' is able to be serviced fine, but 'engine2' cannot. This is because RC only provides immutable access to its contents, it is designed for cases where you need shared ownership but not shared mutability.
+
+## Lab D Reflection
+
+Through this lab I have become more familiar with the 'RustTM' way of doing things. Despite having some previous Rust experience, the lab provided me with a nicely formatted way of understanding the more complex way data structures can interact in Rust. I understand that at this early stage of learning, the main focus here is not necessarily to give big coding tasks, but more bitesized examples on the 'why' of Rust programming, something that I do appreciate. Although I am still largely inexperienced, I am excited to have gotten more in-tune with Rust's infamous ownership and borrowing system. I am hyped to see where Refcel or Mutex fit into this. I assume we will be using Mutex in the next lab because this is all building up to being able to make multi-threaded programs.
