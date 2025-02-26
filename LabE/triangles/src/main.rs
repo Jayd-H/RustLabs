@@ -86,9 +86,12 @@ fn main() {
                     // Iterate over the 10 triangles
                     for i in 0 .. 10 {
 
+                        let x = rand::random::<f32>();
+                        let y = rand::random::<f32>();
+
                         // Calculate the position of the triangle
-                        let pos_x : f32 = delta_t + ((i as f32) * 0.1);
-                        let pos_y : f32 = delta_t + ((i as f32) * 0.1);
+                        let pos_x : f32 = delta_t + ((i as f32) * 0.1 * x);
+                        let pos_y : f32 = delta_t + ((i as f32) * 0.1 * y);
                         let pos_z : f32 = 0.0;
                         
                         // Create a 4x4 matrix to store the position and orientation of the triangle

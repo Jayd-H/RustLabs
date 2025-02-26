@@ -961,3 +961,226 @@ error: could not compile `Aircraft` (bin "Aircraft") due to 1 previous error
 ## Lab D Reflection
 
 Through this lab I have become more familiar with the 'RustTM' way of doing things. Despite having some previous Rust experience, the lab provided me with a nicely formatted way of understanding the more complex way data structures can interact in Rust. I understand that at this early stage of learning, the main focus here is not necessarily to give big coding tasks, but more bitesized examples on the 'why' of Rust programming, something that I do appreciate. Although I am still largely inexperienced, I am excited to have gotten more in-tune with Rust's infamous ownership and borrowing system. I am hyped to see where Refcel or Mutex fit into this. I assume we will be using Mutex in the next lab because this is all building up to being able to make multi-threaded programs.
+
+# Lab E
+
+## Q1
+
+Open the **unsafe_print** folder in Visual Studio Code.
+
+Build and run the code, and ensure that it works.
+Examine the code to become familiar with the syntax.
+
+The output should appear jumbled, as multiple threads compete for the single print function. This is called a race condition. You might have to run it several times to see the jumble.
+
+Make a copy of the **unsafe_print** folder and name it **safe_print**.
+
+The remainder of **Q1** will work in the **safe_print** folder.
+
+Implement the thread safe printing as described during the lectures.
+
+You will need to use both `Mutex` and `Arc` to create a critical section within the `print_lots()`
+
+Create the `Mutex` and `Arc` within `main()`, to enable them to be shared with all the threads.
+
+Ensure that the result of `print_lots()` no longer demonstrates a race condition.
+
+What happens to your code if you fail to release the mutex?
+
+Are you able to verify this in your code?
+
+What happens if you raise an exception within the critical section?
+
+Extend your code to verify your answer
+
+## A1
+
+Interestly, there are two solutions to this issue. One is the actual solution with Mutex and Arc (the one that we are meant to use to demonstrate thread safety), and the other is using `stdout().lock()` which is specific for this problem. I have written code that demonstrates both of these solutions.
+
+```Rust
+
+use std::sync::{Arc, Mutex};
+use std::thread;
+use std::io::{self, Write};
+
+//* THERE ARE TWO METHODS TO SOLVE THIS */
+//* 1. use mutex with arc for thread-safe sharing using standard print! macros */
+//* 2. use stdout().lock() for thread-safe sharing using write! and writeln! macros */
+
+//* the mutex approach is better because its general-purpose and therefore the point of this lab */
+//* the stdout().lock() approach is more memory efficient (no need for extra allocations) but less general-purpose */
+//* realistically you are using mutex */
+
+fn main() {
+    println!("=== Approach 1: Using Arc<Mutex<()>> ===");
+
+    let num_of_threads = 4;
+    let mut array_of_threads = vec!();
+
+    let mutex = Mutex::new(());
+    let arc_mutex = Arc::new(mutex);
+
+    for id in 0..num_of_threads {
+        let thread_mutex = Arc::clone(&arc_mutex);
+
+        array_of_threads.push(thread::spawn(move || {
+            print_lots(id, thread_mutex)
+        }));
+    }
+
+    for t in array_of_threads {
+        t.join().expect("Thread join failure");
+    }
+
+    println!("\n=== Approach 2: Using stdout().lock() ===");
+
+    let mut array_of_threads = vec!();
+
+    for id in 0..num_of_threads {
+        array_of_threads.push(thread::spawn(move || {
+            print_lots_alt(id)
+        }));
+    }
+
+    for t in array_of_threads {
+        t.join().expect("Thread join failure");
+    }
+}
+
+//* mutex approach */
+fn print_lots(id: u32, lock: Arc<Mutex<()>>) {
+    // acquire the lock - this blocks until the lock is available
+    let _guard = lock.lock().unwrap();
+
+    // while the _guard exists, we have exclusive access to stdout
+    println!("Begin [{}]", id);
+    for _i in 0..100 {
+        print!("{} ", id);
+    }
+    println!("\nEnd [{}]", id);
+
+    // _guard automatically drops here when it goes out of scope
+    // which releases the lock for other threads
+}
+
+//* stdout().lock() approach */
+fn print_lots_alt(id: u32) {
+    // get a handle to stdout
+    let stdout = io::stdout();
+    // lock stdout for exclusive access
+    let mut handle = stdout.lock();
+
+    // use write! and writeln! with the locked handle
+    writeln!(handle, "Begin [{}]", id).unwrap();
+    for _i in 0..100 {
+        write!(handle, "{} ", id).unwrap();
+    }
+    writeln!(handle, "\nEnd [{}]", id).unwrap();
+
+    // lock is automatically released when handle goes out of scope
+}
+
+```
+
+```
+
+PS D:\Files\Documents\AProjects\Rust\ParallelAndConcurrentProgrammingLabs\LabE\safe_print> cargo run
+   Compiling locks v0.1.0 (D:\Files\Documents\AProjects\Rust\ParallelAndConcurrentProgrammingLabs\LabE\safe_print)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.54s
+     Running `target\debug\locks.exe`
+=== Approach 1: Using Arc<Mutex<()>> ===
+Begin [0]
+0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+End [0]
+Begin [1]
+1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1
+End [1]
+Begin [2]
+2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2
+End [2]
+Begin [3]
+3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3
+End [3]
+
+=== Approach 2: Using stdout().lock() ===
+Begin [0]
+0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+End [0]
+Begin [2]
+2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2
+End [2]
+Begin [1]
+1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1
+End [1]
+Begin [3]
+3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3
+End [3]
+
+```
+
+We create a Mutex with an empty tuple (unit), this will control access to the shared resource of `stdout()`. We use Arc to share this Mutex across all of the threads. Arc is a friendly little smart pointer that allows use to pseudo-bypass the strict ownership rules of Rust, it keeps track of how many references to a value exist, incrementing the count when you clone it, and decreasing it when a reference is dropped. When the count reaches zero, it destroys the underlying value. Through Arc, we distribute a reference to Mutex across all the threads, when a thread calls the `print_lots()` function, it tries to get the lock from Mutex, hanging until it does. When a thread acquires the lock, it will continue to execute its code until its done, therefore automatically dropping the lock for the next thread. When a thread is done executing the `print_lots()` function, it gets joined, which Arc notices this and therefore removes the reference for Mutex from it as a form of garbage collection. This culminates with each thread allowing exclusive access to `stdout()` before another thread gets it, meaning we have nice sequential printing for each thread. The order is arbitrary, its whatever thread gets to the lock first.
+
+Because each thread will wait to recieve the lock, if one thread for whatever reason does not drop the lock after it is done with it, we end up in a deadlock situation, halting progress of the entire program.
+
+Because Rust is built with multi-threading in mind, `stdout().lock` exists, providing a built-in locking mechanism specifically for printing to console. This solution is a lot less verbose, with no need for Mutex or Arc, but the idea is still the same. When the function gets called, it locks `stdout()` until it is done writing, of which then it releases the lock for the next thread. We use the `write!` macro here instead of the more convenient `print!` macro because we need a more low-level macro that does not automatically handle locking and unlocking. This approach is more idiomatic for a simple CLI Rust program, but is not the point of this lab, as it is to introduce Mutex and Arc. In a real-world example, this method I assume would be preffered.
+
+## Q2
+
+Open the **triangles** folder in Visual Studio Code.
+
+This is a Rust program that uses OpenGL to render some simple triangles to the scene.
+
+Build and run the code to ensure it works.
+
+Although this is a relatively small piece of code by OpenGL standards, it does use some advanced Rust language constructs. Don't panic, you are not expected to understand all of this code, even if you have previously studied graphics.
+
+We'll look at the code in a little more detail in future lectures.
+
+For this lab, focus on the code between the comments:
+
+```Rust
+// Begin render loop
+```
+
+and
+
+```Rust
+// End render loop
+```
+
+The code clears the screen, and then individually positions ten triangles on the display. It uses the counter `delta_t` to animate the triangles.
+
+Update the code to move the triangles around the screen in a more chaotic pattern.
+
+The following code can be used to generate a floating point random number.
+
+```Rust
+let x = rand::random::<f32>();
+```
+
+Use this code to help create a more chaotic movement of triangles.
+
+### Note
+
+As part of the final large lab exercise, you will be required to create a large parallel simulation to be run on both the CPU and GPU. You will be using this OpenGL framework to help visualize the results. It is therefore important that you complete this lab exercise so that you start becoming familiar with the OpenGL / Rust interface.
+
+## A2
+
+I simply created two random floats and multiplied the x and y positions by them for each triangle.
+
+```Rust
+
+ let x = rand::random::<f32>();
+ let y = rand::random::<f32>();
+
+ // Calculate the position of the triangle
+ let pos_x : f32 = delta_t + ((i as f32) * 0.1 * x);
+ let pos_y : f32 = delta_t + ((i as f32) * 0.1 * y);
+
+```
+
+This created more chaotic movement in the triangles. You could take this a step further by having two random floats for each axis, or by altering the delta time with a random variable, but that is not the point of this lab (I think).
+
+## Lab E Reflection
+
+This lab was really interesting and allowed me to explore Mutex and Arc with a relatively simple but realistic example. I have definitely improved my programming knowledge in Rust and am excited to explore the potential that this knowledge brings me. I am definitely the type of person that likes to sweat over saving milliseconds so it has been very fun to see the benefits and disadvantages of multi-threading. I am happy to have found two methods for solving the first question too, and taking the time to understand them both has increased my confidence with Rust. Familiarising myself with OpenGL Rust code has also been interesting, especially because I have prior experience with webGL. I am hyped for this big end of year assignment, especially the Rust section. The Cuda section not so much because I have an AMD card.

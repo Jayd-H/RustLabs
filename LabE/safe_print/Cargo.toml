@@ -1,5 +1,5 @@
 [package]
-name = "opengl_rust_glium"
+name = "locks"
 version = "0.1.0"
 authors = ["wjviant <wjviant@googlemail.com>"]
 edition = "2018"
@@ -7,6 +7,3 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-glium = "*"
-rand = "0.9.0"
-winit = "*"
