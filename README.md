@@ -1237,6 +1237,326 @@ This macro instructs the compiler to implement a debug, copy and clone trait for
 
 ## A1
 
+I ended up with this code:
+
+```Rust
+
+//* Simple Particle Sim */
+const NUM_PARTICLES: usize = 100;
+const ENCLOSURE_SIZE: f32 = 10.0;
+
+//* Particle */
+#[derive(Debug, Copy, Clone)]
+pub struct Particle {
+    x: f32,
+    y: f32,
+}
+
+impl Particle {
+    fn new(x: f32, y: f32) -> Self {
+        Particle { x, y }
+    }
+}
+
+//* ParticleSystem */
+struct ParticleSystem {
+    particles: Vec<Particle>,
+}
+
+impl ParticleSystem {
+    fn new() -> Self {
+        let mut particles = Vec::with_capacity(NUM_PARTICLES);
+
+        for i in 0..NUM_PARTICLES {
+            let row = i / 10;
+            let col = i % 10;
+
+            let x = (col as f32) * ENCLOSURE_SIZE / 10.0 + 0.5;
+            let y = (row as f32) * ENCLOSURE_SIZE / 10.0 + 0.5;
+
+            particles.push(Particle::new(x, y));
+        }
+
+        ParticleSystem { particles }
+    }
+
+    fn move_particles(&mut self) {
+        for particle in &mut self.particles {
+            let dx = (rand::random::<f32>() - 0.5) * 0.2;
+            let dy = (rand::random::<f32>() - 0.5) * 0.2;
+
+            particle.x = f32::min(f32::max(particle.x + dx, 0.0), ENCLOSURE_SIZE);
+            particle.y = f32::min(f32::max(particle.y + dy, 0.0), ENCLOSURE_SIZE);
+        }
+    }
+
+    fn run_simulation(&mut self) {
+        use std::time::{Duration, Instant};
+
+        let simulation_duration = Duration::from_secs(10);
+        let start_time = Instant::now();
+
+        while start_time.elapsed() < simulation_duration {
+            self.move_particles();
+        }
+    }
+}
+
+//* Main */
+fn main() {
+    let mut particle_system = ParticleSystem::new();
+
+    println!("Initial state - showing first 5 particles:");
+    for i in 0..5 {
+        println!("Particle {}: ({:.2}, {:.2})",
+                 i,
+                 particle_system.particles[i].x,
+                 particle_system.particles[i].y);
+    }
+
+    particle_system.move_particles();
+
+    println!("\nAfter movement - showing first 5 particles:");
+    for i in 0..5 {
+        println!("Particle {}: ({:.2}, {:.2})",
+                 i,
+                 particle_system.particles[i].x,
+                 particle_system.particles[i].y);
+    }
+
+    println!("\nRunning simulation for 10 seconds...");
+    particle_system.run_simulation();
+    println!("Simulation complete");
+
+    println!("\nFinal state - showing first 5 particles:");
+    for i in 0..5 {
+        println!("Particle {}: ({:.2}, {:.2})",
+                 i,
+                 particle_system.particles[i].x,
+                 particle_system.particles[i].y);
+    }
+
+
+    let avg_x = particle_system.particles.iter().map(|p| p.x).sum::<f32>() / NUM_PARTICLES as f32;
+    let avg_y = particle_system.particles.iter().map(|p| p.y).sum::<f32>() / NUM_PARTICLES as f32;
+
+    println!("\nAverage position of all particles: ({:.2}, {:.2})", avg_x, avg_y);
+}
+
+```
+
+There are two objects, Particle and ParticleSystem. A ParticleSystem is an array of Particle objects, and when it gets initialised, it creates a set number of Particles in a set enclosure size. The Particles are placed in a grid-like pattern uniformly. In this case Particles 0-9 are placed in the first row (y=0.5) with x values from 0.5 to 9.5, Particles 10-19 are in the second row (y=1.5) with x values from 0.5 to 9.5. This distribution is intental as if they all started from a common point, we would just see clustering, which is not a good visualisation of how each Particle moves here.
+
+There are also two other functions for ParticleSystem `move_particles()` and `run_simulation()`. `move_particles()` iterates through the Particles in the ParticleSystem, generate two random displacement floats for the X and Y axis, and moves it. We opt for `let dx = (rand::random::<f32>() - 0.5) * 0.2;` here instead of just generating a float because with this method the values generated are between -0.1 and 0.1 rather than 0-1.
+
+The second function associated with ParticleSystem is `run_simulation()`. This will start a 10 second timer, and while that timer is running, it will continue to call the `move_particles()` function. Meaning after 10 seconds, all of the Particles will be displaced by a great amount.
+
+In the main function, we show the first 5 Particles in the particle system before any displacement. Then we move one 'step', and print the first 5 Particles positions again. Then we run the simulation and print the first 5 Particles new positions. Once that is done, we can show the average position of all Particles. Here is the output:
+
+```
+Initial state - showing first 5 particles:
+Particle 0: (0.50, 0.50)
+Particle 1: (1.50, 0.50)
+Particle 2: (2.50, 0.50)
+Particle 3: (3.50, 0.50)
+Particle 4: (4.50, 0.50)
+
+After movement - showing first 5 particles:
+Particle 0: (0.49, 0.44)
+Particle 1: (1.56, 0.52)
+Particle 2: (2.52, 0.49)
+Particle 3: (3.43, 0.41)
+Particle 4: (4.45, 0.53)
+
+Running simulation for 10 seconds...
+Simulation complete
+
+Final state - showing first 5 particles:
+Particle 0: (1.27, 8.44)
+Particle 1: (0.55, 7.30)
+Particle 2: (1.16, 9.00)
+Particle 3: (9.46, 4.74)
+Particle 4: (8.90, 0.23)
+
+Average position of all particles: (4.68, 4.85)
+```
+
+The average position being near the center of the enclosure size is a good sign.
+
+### Better VIsualising
+
+This part is largely uninportant to the core of the lab and therefore can be skipped, this is for my own sake.
+
+I then decided I wanted a more visual representation because it is all good and well printing out the positions but what good is a particle simulation without you being able to see the particles dance around. Using the lightweight Rust Crate 'minifb' (minimal framebuffer) we can create a window and draw pixels to it. We create a buffer to draw to and iterate through each particle, writing it to the buffer, with each pixel being represented as a 32-bit unsigned integer in ARGB. Our rendering loop updates with the buffer and renders new frames at 60fps, running until the simulation is finished (10 seconds in this case) or until we press ESC.
+
+```Rust
+
+extern crate minifb;
+extern crate rand;
+
+use minifb::{Key, Window, WindowOptions};
+use std::time::{Duration, Instant};
+
+const NUM_PARTICLES: usize = 100;
+const ENCLOSURE_SIZE: f32 = 10.0;
+const WINDOW_WIDTH: usize = 800;
+const WINDOW_HEIGHT: usize = 800;
+const PARTICLE_SIZE: usize = 5;
+
+#[derive(Debug, Copy, Clone)]
+pub struct Particle {
+    x: f32,
+    y: f32,
+}
+
+impl Particle {
+    fn new(x: f32, y: f32) -> Self {
+        Particle { x, y }
+    }
+}
+
+struct ParticleSystem {
+    particles: Vec<Particle>,
+}
+
+impl ParticleSystem {
+    fn new() -> Self {
+        let mut particles = Vec::with_capacity(NUM_PARTICLES);
+
+        for i in 0..NUM_PARTICLES {
+            let row = i / 10;
+            let col = i % 10;
+
+            let x = (col as f32) * ENCLOSURE_SIZE / 10.0 + 0.5;
+            let y = (row as f32) * ENCLOSURE_SIZE / 10.0 + 0.5;
+
+            particles.push(Particle::new(x, y));
+        }
+
+        ParticleSystem { particles }
+    }
+
+    fn move_particles(&mut self) {
+        for particle in &mut self.particles {
+            let dx = (rand::random::<f32>() - 0.5) * 0.2;
+            let dy = (rand::random::<f32>() - 0.5) * 0.2;
+
+            particle.x = f32::min(f32::max(particle.x + dx, 0.0), ENCLOSURE_SIZE);
+            particle.y = f32::min(f32::max(particle.y + dy, 0.0), ENCLOSURE_SIZE);
+        }
+    }
+
+    fn run_simulation(&mut self) {
+        let simulation_duration = Duration::from_secs(10);
+        let start_time = Instant::now();
+
+        while start_time.elapsed() < simulation_duration {
+            self.move_particles();
+        }
+    }
+
+    fn run_simulation_with_visualization(&mut self) {
+        let mut window = Window::new(
+            "Particle Simulation",
+            WINDOW_WIDTH,
+            WINDOW_HEIGHT,
+            WindowOptions::default(),
+        )
+        .unwrap_or_else(|e| {
+            panic!("{}", e);
+        });
+
+        let mut buffer: Vec<u32> = vec![0; WINDOW_WIDTH * WINDOW_HEIGHT];
+
+        let start_time = Instant::now();
+        let simulation_duration = Duration::from_secs(10);
+
+        let mut last_render_time = Instant::now();
+        let render_interval = Duration::from_millis(16);
+
+        while window.is_open() && !window.is_key_down(Key::Escape) && start_time.elapsed() < simulation_duration {
+            self.move_particles();
+
+            if last_render_time.elapsed() >= render_interval {
+                for i in buffer.iter_mut() {
+                    *i = 0;
+                }
+
+                for (i, particle) in self.particles.iter().enumerate() {
+                    let px = (particle.x / ENCLOSURE_SIZE * WINDOW_WIDTH as f32) as usize;
+                    let py = (particle.y / ENCLOSURE_SIZE * WINDOW_HEIGHT as f32) as usize;
+
+                    let color = 0xFF000000 |
+                                (((i as u32 * 50) % 256) << 16) |
+                                (((i as u32 * 100) % 256) << 8) |
+                                ((i as u32 * 150) % 256);
+
+                    for dy in 0..PARTICLE_SIZE {
+                        for dx in 0..PARTICLE_SIZE {
+                            let draw_x = px.saturating_add(dx).min(WINDOW_WIDTH - 1);
+                            let draw_y = py.saturating_add(dy).min(WINDOW_HEIGHT - 1);
+                            let idx = draw_y * WINDOW_WIDTH + draw_x;
+                            if idx < buffer.len() {
+                                buffer[idx] = color;
+                            }
+                        }
+                    }
+                }
+
+                window.update_with_buffer(&buffer, WINDOW_WIDTH, WINDOW_HEIGHT).unwrap();
+                last_render_time = Instant::now();
+            }
+        }
+    }
+}
+
+fn main() {
+    let mut particle_system = ParticleSystem::new();
+
+    println!("Initial state - showing first 5 particles:");
+    for i in 0..5 {
+        println!("Particle {}: ({:.2}, {:.2})",
+                 i,
+                 particle_system.particles[i].x,
+                 particle_system.particles[i].y);
+    }
+
+    particle_system.move_particles();
+
+    println!("\nAfter movement - showing first 5 particles:");
+    for i in 0..5 {
+        println!("Particle {}: ({:.2}, {:.2})",
+                 i,
+                 particle_system.particles[i].x,
+                 particle_system.particles[i].y);
+    }
+
+    println!("\nRunning simulation with visualization for 10 seconds...");
+    particle_system.run_simulation_with_visualization();
+    println!("Simulation complete");
+
+    println!("\nFinal state - showing first 5 particles:");
+    for i in 0..5 {
+        println!("Particle {}: ({:.2}, {:.2})",
+                 i,
+                 particle_system.particles[i].x,
+                 particle_system.particles[i].y);
+    }
+
+    let avg_x = particle_system.particles.iter().map(|p| p.x).sum::<f32>() / NUM_PARTICLES as f32;
+    let avg_y = particle_system.particles.iter().map(|p| p.y).sum::<f32>() / NUM_PARTICLES as f32;
+
+    println!("\nAverage position of all particles: ({:.2}, {:.2})", avg_x, avg_y);
+}
+
+```
+
+Here is a screenshot of the simulation window:
+
+![Particle Simulation Window](image.png)
+
+I will not be doing this for the next question as I am not in the mood to give it a go right now.
+
 ## Q2
 
 Make a copy of your `particle` project and name it `particle_threaded`
@@ -1293,5 +1613,136 @@ Once you have working code, test it in both release and debug mode.
 What do you notice about the performance of the threaded versus non-threaded code ?
 
 ## A2
+
+I took my code from A1 (pre-visualisation) and butchered it for multi-threading. Here is the full code:
+
+```Rust
+
+const NUM_PARTICLES: usize = 100;
+const ENCLOSURE_SIZE: f32 = 10.0;
+const NUM_OF_THREADS: usize = 4;
+
+#[derive(Debug, Copy, Clone)]
+pub struct Particle {
+    x: f32,
+    y: f32,
+}
+
+impl Particle {
+    fn new(x: f32, y: f32) -> Self {
+        Particle { x, y }
+    }
+}
+
+struct ParticleSystem {
+    particles: Vec<Particle>,
+}
+
+impl ParticleSystem {
+    fn new() -> Self {
+        let mut particles = Vec::with_capacity(NUM_PARTICLES);
+
+        for i in 0..NUM_PARTICLES {
+            let row = i / 10;
+            let col = i % 10;
+
+            let x = (col as f32) * ENCLOSURE_SIZE / 10.0 + 0.5;
+            let y = (row as f32) * ENCLOSURE_SIZE / 10.0 + 0.5;
+
+            particles.push(Particle::new(x, y));
+        }
+
+        ParticleSystem { particles }
+    }
+
+    fn move_particles(&mut self) {
+        for particle in &mut self.particles {
+            let dx = (rand::random::<f32>() - 0.5) * 0.2;
+            let dy = (rand::random::<f32>() - 0.5) * 0.2;
+
+            particle.x = f32::min(f32::max(particle.x + dx, 0.0), ENCLOSURE_SIZE);
+            particle.y = f32::min(f32::max(particle.y + dy, 0.0), ENCLOSURE_SIZE);
+        }
+    }
+
+    fn move_particles_threaded(&mut self) {
+        let mut pool = scoped_threadpool::Pool::new(NUM_OF_THREADS as u32);
+
+        let chunk_size = (NUM_PARTICLES + NUM_OF_THREADS - 1) / NUM_OF_THREADS;
+
+        pool.scoped(|scope| {
+            for chunk in self.particles.chunks_mut(chunk_size) {
+                scope.execute(move || {
+                    thread_main(chunk, ENCLOSURE_SIZE);
+                });
+            }
+        });
+    }
+
+    fn run_simulation(&mut self, threaded: bool) {
+        use std::time::{Duration, Instant};
+
+        let simulation_duration = Duration::from_secs(10);
+        let start_time = Instant::now();
+
+        while start_time.elapsed() < simulation_duration {
+            if threaded {
+                self.move_particles_threaded();
+            } else {
+                self.move_particles();
+            }
+        }
+
+        let elapsed = start_time.elapsed();
+        println!("Simulation took {:?}", elapsed);
+    }
+}
+
+pub fn thread_main(list: &mut [Particle], enclosure_size: f32) {
+    for particle in list {
+        let dx = (rand::random::<f32>() - 0.5) * 0.2;
+        let dy = (rand::random::<f32>() - 0.5) * 0.2;
+
+        particle.x = f32::min(f32::max(particle.x + dx, 0.0), enclosure_size);
+        particle.y = f32::min(f32::max(particle.y + dy, 0.0), enclosure_size);
+    }
+}
+
+fn main() {
+    let mut particle_system = ParticleSystem::new();
+
+    println!("Initial state - showing first 5 particles:");
+    for i in 0..5 {
+        println!("Particle {}: ({:.2}, {:.2})",
+                 i,
+                 particle_system.particles[i].x,
+                 particle_system.particles[i].y);
+    }
+
+    println!("\nRunning multi-threaded simulation for 10 seconds...");
+    particle_system.run_simulation(true);
+    println!("Multi-threaded simulation complete");
+
+    println!("\nFinal state - showing first 5 particles:");
+    for i in 0..5 {
+        println!("Particle {}: ({:.2}, {:.2})",
+                 i,
+                 particle_system.particles[i].x,
+                 particle_system.particles[i].y);
+    }
+
+    let avg_x = particle_system.particles.iter().map(|p| p.x).sum::<f32>() / NUM_PARTICLES as f32;
+    let avg_y = particle_system.particles.iter().map(|p| p.y).sum::<f32>() / NUM_PARTICLES as f32;
+
+    println!("\nAverage position of all particles: ({:.2}, {:.2})", avg_x, avg_y);
+}
+
+```
+
+The new `thread_main()` function now handles a subset of particles, again just displacing them like before but doing it only for a list of particles. This function accepts a mutable slice of particles and the enclosure size, serving as the core logic here for the program. We call this new function with another new funcion, `move_particles_threaded()`, which creates a thread pool based on the thread count const and divides them into neat little chunks.
+
+We use a scoped thread pool here as it is localisaed to a specific block of code, this makes life easier because it automatically handles joining the threads at the end of the scope. To calculate the chunk size, `(NUM_PARTICLES + NUM_OF_THREADS - 1) / NUM_OF_THREADS` esnures that particles are evenly distrivuted among threads, with the last thread potentially handling fewer particles if need be.
+
+# NEEDS FINISHING
 
 ## Lab F Reflection
