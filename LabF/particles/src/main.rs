@@ -1,8 +1,15 @@
-//* Simple Particle Sim */
+extern crate minifb;
+extern crate rand;
+
+use minifb::{Key, Window, WindowOptions};
+use std::time::{Duration, Instant};
+
 const NUM_PARTICLES: usize = 100;
 const ENCLOSURE_SIZE: f32 = 10.0;
+const WINDOW_WIDTH: usize = 800;
+const WINDOW_HEIGHT: usize = 800;
+const PARTICLE_SIZE: usize = 5;
 
-//* Particle */
 #[derive(Debug, Copy, Clone)]
 pub struct Particle {
     x: f32,
@@ -15,7 +22,6 @@ impl Particle {
     }
 }
 
-//* ParticleSystem */
 struct ParticleSystem {
     particles: Vec<Particle>,
 }
@@ -48,8 +54,6 @@ impl ParticleSystem {
     }
     
     fn run_simulation(&mut self) {
-        use std::time::{Duration, Instant};
-        
         let simulation_duration = Duration::from_secs(10);
         let start_time = Instant::now();
         
@@ -57,9 +61,62 @@ impl ParticleSystem {
             self.move_particles();
         }
     }
+    
+    fn run_simulation_with_visualization(&mut self) {
+        let mut window = Window::new(
+            "Particle Simulation",
+            WINDOW_WIDTH,
+            WINDOW_HEIGHT,
+            WindowOptions::default(),
+        )
+        .unwrap_or_else(|e| {
+            panic!("{}", e);
+        });
+
+        let mut buffer: Vec<u32> = vec![0; WINDOW_WIDTH * WINDOW_HEIGHT];
+        
+        let start_time = Instant::now();
+        let simulation_duration = Duration::from_secs(10);
+        
+        let mut last_render_time = Instant::now();
+        let render_interval = Duration::from_millis(16);
+        
+        while window.is_open() && !window.is_key_down(Key::Escape) && start_time.elapsed() < simulation_duration {
+            self.move_particles();
+            
+            if last_render_time.elapsed() >= render_interval {
+                for i in buffer.iter_mut() {
+                    *i = 0;
+                }
+                
+                for (i, particle) in self.particles.iter().enumerate() {
+                    let px = (particle.x / ENCLOSURE_SIZE * WINDOW_WIDTH as f32) as usize;
+                    let py = (particle.y / ENCLOSURE_SIZE * WINDOW_HEIGHT as f32) as usize;
+                    
+                    let color = 0xFF000000 | 
+                                (((i as u32 * 50) % 256) << 16) | 
+                                (((i as u32 * 100) % 256) << 8) | 
+                                ((i as u32 * 150) % 256);
+                    
+                    for dy in 0..PARTICLE_SIZE {
+                        for dx in 0..PARTICLE_SIZE {
+                            let draw_x = px.saturating_add(dx).min(WINDOW_WIDTH - 1);
+                            let draw_y = py.saturating_add(dy).min(WINDOW_HEIGHT - 1);
+                            let idx = draw_y * WINDOW_WIDTH + draw_x;
+                            if idx < buffer.len() {
+                                buffer[idx] = color;
+                            }
+                        }
+                    }
+                }
+                
+                window.update_with_buffer(&buffer, WINDOW_WIDTH, WINDOW_HEIGHT).unwrap();
+                last_render_time = Instant::now();
+            }
+        }
+    }
 }
 
-//* Main */
 fn main() {
     let mut particle_system = ParticleSystem::new();
     
@@ -81,9 +138,8 @@ fn main() {
                  particle_system.particles[i].y);
     }
     
-    // Run simulation
-    println!("\nRunning simulation for 10 seconds...");
-    particle_system.run_simulation();
+    println!("\nRunning simulation with visualization for 10 seconds...");
+    particle_system.run_simulation_with_visualization();
     println!("Simulation complete");
     
     println!("\nFinal state - showing first 5 particles:");
@@ -94,7 +150,6 @@ fn main() {
                  particle_system.particles[i].y);
     }
     
-    // You could also add some statistics about all particles
     let avg_x = particle_system.particles.iter().map(|p| p.x).sum::<f32>() / NUM_PARTICLES as f32;
     let avg_y = particle_system.particles.iter().map(|p| p.y).sum::<f32>() / NUM_PARTICLES as f32;
     
