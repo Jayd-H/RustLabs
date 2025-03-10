@@ -59,23 +59,26 @@ impl ParticleSystem {
         });
     }
     
-    fn run_simulation(&mut self, threaded: bool) {
-        use std::time::{Duration, Instant};
-        
-        let simulation_duration = Duration::from_secs(10);
-        let start_time = Instant::now();
-        
-        while start_time.elapsed() < simulation_duration {
-            if threaded {
-                self.move_particles_threaded();
-            } else {
-                self.move_particles();
-            }
+   fn run_simulation(&mut self, threaded: bool) -> usize {
+    use std::time::{Duration, Instant};
+    
+    let simulation_duration = Duration::from_secs(10);
+    let start_time = Instant::now();
+    let mut steps = 0;
+    
+    while start_time.elapsed() < simulation_duration {
+        if threaded {
+            self.move_particles_threaded();
+        } else {
+            self.move_particles();
         }
-        
-        let elapsed = start_time.elapsed();
-        println!("Simulation took {:?}", elapsed);
+        steps += 1;
     }
+    
+    let elapsed = start_time.elapsed();
+    println!("Simulation completed {} steps in {:?}", steps, elapsed);
+    steps
+}
 }
 
 pub fn thread_main(list: &mut [Particle], enclosure_size: f32) {
@@ -89,9 +92,10 @@ pub fn thread_main(list: &mut [Particle], enclosure_size: f32) {
 }
 
 fn main() {
+    // Run non-threaded version
     let mut particle_system = ParticleSystem::new();
     
-    println!("Initial state - showing first 5 particles:");
+    println!("Initial state (non-threaded) - showing first 5 particles:");
     for i in 0..5 {
         println!("Particle {}: ({:.2}, {:.2})", 
                  i, 
@@ -99,11 +103,10 @@ fn main() {
                  particle_system.particles[i].y);
     }
     
-    println!("\nRunning multi-threaded simulation for 10 seconds...");
-    particle_system.run_simulation(true);
-    println!("Multi-threaded simulation complete");
+    println!("\nRunning non-threaded simulation for 10 seconds...");
+    let non_threaded_steps = particle_system.run_simulation(false);
     
-    println!("\nFinal state - showing first 5 particles:");
+    println!("\nFinal state (non-threaded) - showing first 5 particles:");
     for i in 0..5 {
         println!("Particle {}: ({:.2}, {:.2})", 
                  i, 
@@ -113,6 +116,37 @@ fn main() {
     
     let avg_x = particle_system.particles.iter().map(|p| p.x).sum::<f32>() / NUM_PARTICLES as f32;
     let avg_y = particle_system.particles.iter().map(|p| p.y).sum::<f32>() / NUM_PARTICLES as f32;
+    println!("\nAverage position of all particles (non-threaded): ({:.2}, {:.2})", avg_x, avg_y);
     
-    println!("\nAverage position of all particles: ({:.2}, {:.2})", avg_x, avg_y);
+    // Run threaded version
+    let mut particle_system_threaded = ParticleSystem::new();
+    
+    println!("\nInitial state (threaded) - showing first 5 particles:");
+    for i in 0..5 {
+        println!("Particle {}: ({:.2}, {:.2})", 
+                 i, 
+                 particle_system_threaded.particles[i].x, 
+                 particle_system_threaded.particles[i].y);
+    }
+    
+    println!("\nRunning multi-threaded simulation for 10 seconds...");
+    let threaded_steps = particle_system_threaded.run_simulation(true);
+    
+    println!("\nFinal state (threaded) - showing first 5 particles:");
+    for i in 0..5 {
+        println!("Particle {}: ({:.2}, {:.2})", 
+                 i, 
+                 particle_system_threaded.particles[i].x, 
+                 particle_system_threaded.particles[i].y);
+    }
+    
+    let avg_x = particle_system_threaded.particles.iter().map(|p| p.x).sum::<f32>() / NUM_PARTICLES as f32;
+    let avg_y = particle_system_threaded.particles.iter().map(|p| p.y).sum::<f32>() / NUM_PARTICLES as f32;
+    println!("\nAverage position of all particles (threaded): ({:.2}, {:.2})", avg_x, avg_y);
+    
+    // Performance comparison
+    println!("\nPerformance comparison:");
+    println!("- Non-threaded: {} steps", non_threaded_steps);
+    println!("- Threaded: {} steps", threaded_steps);
+    println!("- Speedup: {:.2}x", threaded_steps as f32 / non_threaded_steps as f32);
 }
