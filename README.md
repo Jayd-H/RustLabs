@@ -1743,6 +1743,155 @@ The new `thread_main()` function now handles a subset of particles, again just d
 
 We use a scoped thread pool here as it is localisaed to a specific block of code, this makes life easier because it automatically handles joining the threads at the end of the scope. To calculate the chunk size, `(NUM_PARTICLES + NUM_OF_THREADS - 1) / NUM_OF_THREADS` esnures that particles are evenly distrivuted among threads, with the last thread potentially handling fewer particles if need be.
 
-# NEEDS FINISHING
+To compare the efficacy of both approaches, we could implement a step counter so we can see how many times all of the particles were displaced over the 10 seconds:
+
+```Rust
+
+ fn run_simulation(&mut self, threaded: bool) -> usize {
+    use std::time::{Duration, Instant};
+
+    let simulation_duration = Duration::from_secs(10);
+    let start_time = Instant::now();
+    let mut steps = 0;
+
+    while start_time.elapsed() < simulation_duration {
+        if threaded {
+            self.move_particles_threaded();
+        } else {
+            self.move_particles();
+        }
+        steps += 1;
+    }
+
+    let elapsed = start_time.elapsed();
+    println!("Simulation completed {} steps in {:?}", steps, elapsed);
+    steps
+}
+}
+
+pub fn thread_main(list: &mut [Particle], enclosure_size: f32) {
+    for particle in list {
+        let dx = (rand::random::<f32>() - 0.5) * 0.2;
+        let dy = (rand::random::<f32>() - 0.5) * 0.2;
+
+        particle.x = f32::min(f32::max(particle.x + dx, 0.0), enclosure_size);
+        particle.y = f32::min(f32::max(particle.y + dy, 0.0), enclosure_size);
+    }
+}
+
+fn main() {
+    // Run non-threaded version
+    let mut particle_system = ParticleSystem::new();
+
+    println!("Initial state (non-threaded) - showing first 5 particles:");
+    for i in 0..5 {
+        println!("Particle {}: ({:.2}, {:.2})",
+                 i,
+                 particle_system.particles[i].x,
+                 particle_system.particles[i].y);
+    }
+
+    println!("\nRunning non-threaded simulation for 10 seconds...");
+    let non_threaded_steps = particle_system.run_simulation(false);
+
+    println!("\nFinal state (non-threaded) - showing first 5 particles:");
+    for i in 0..5 {
+        println!("Particle {}: ({:.2}, {:.2})",
+                 i,
+                 particle_system.particles[i].x,
+                 particle_system.particles[i].y);
+    }
+
+    let avg_x = particle_system.particles.iter().map(|p| p.x).sum::<f32>() / NUM_PARTICLES as f32;
+    let avg_y = particle_system.particles.iter().map(|p| p.y).sum::<f32>() / NUM_PARTICLES as f32;
+    println!("\nAverage position of all particles (non-threaded): ({:.2}, {:.2})", avg_x, avg_y);
+
+    // Run threaded version
+    let mut particle_system_threaded = ParticleSystem::new();
+
+    println!("\nInitial state (threaded) - showing first 5 particles:");
+    for i in 0..5 {
+        println!("Particle {}: ({:.2}, {:.2})",
+                 i,
+                 particle_system_threaded.particles[i].x,
+                 particle_system_threaded.particles[i].y);
+    }
+
+    println!("\nRunning multi-threaded simulation for 10 seconds...");
+    let threaded_steps = particle_system_threaded.run_simulation(true);
+
+    println!("\nFinal state (threaded) - showing first 5 particles:");
+    for i in 0..5 {
+        println!("Particle {}: ({:.2}, {:.2})",
+                 i,
+                 particle_system_threaded.particles[i].x,
+                 particle_system_threaded.particles[i].y);
+    }
+
+    let avg_x = particle_system_threaded.particles.iter().map(|p| p.x).sum::<f32>() / NUM_PARTICLES as f32;
+    let avg_y = particle_system_threaded.particles.iter().map(|p| p.y).sum::<f32>() / NUM_PARTICLES as f32;
+    println!("\nAverage position of all particles (threaded): ({:.2}, {:.2})", avg_x, avg_y);
+
+    // Performance comparison
+    println!("\nPerformance comparison:");
+    println!("- Non-threaded: {} steps", non_threaded_steps);
+    println!("- Threaded: {} steps", threaded_steps);
+    println!("- Speedup: {:.2}x", threaded_steps as f32 / non_threaded_steps as f32);
+}
+
+```
+
+And here is the output:
+
+```
+
+Initial state (non-threaded) - showing first 5 particles:
+Particle 0: (0.50, 0.50)
+Particle 1: (1.50, 0.50)
+Particle 2: (2.50, 0.50)
+Particle 3: (3.50, 0.50)
+Particle 4: (4.50, 0.50)
+
+Running non-threaded simulation for 10 seconds...
+Simulation completed 17979412 steps in 10.0000002s
+
+Final state (non-threaded) - showing first 5 particles:
+Particle 0: (4.93, 8.46)
+Particle 1: (1.28, 4.37)
+Particle 2: (4.68, 6.14)
+Particle 3: (4.42, 4.68)
+Particle 4: (7.03, 9.37)
+
+Average position of all particles (non-threaded): (5.58, 5.37)
+
+Initial state (threaded) - showing first 5 particles:
+Particle 0: (0.50, 0.50)
+Particle 1: (1.50, 0.50)
+Particle 2: (2.50, 0.50)
+Particle 3: (3.50, 0.50)
+Particle 4: (4.50, 0.50)
+
+Running multi-threaded simulation for 10 seconds...
+Simulation completed 69262 steps in 10.0000831s
+
+Final state (threaded) - showing first 5 particles:
+Particle 0: (5.65, 0.07)
+Particle 1: (3.99, 7.13)
+Particle 2: (4.88, 8.38)
+Particle 3: (9.70, 6.55)
+Particle 4: (1.49, 7.13)
+
+Average position of all particles (threaded): (5.12, 5.40)
+
+Performance comparison:
+- Non-threaded: 17979412 steps
+- Threaded: 69262 steps
+- Speedup: 0.00x
+
+```
+
+As you can see, the threaded version is actually performing much worse (17979412 > 69262). This was a bit of a shock but I believe I have an explanation. Becaause the program creates an entire new thread pool for every single step of the simulation, there is a lot of overhead because thread creation is expensive. This thread pool creation is not actually that suitable for the workload, as moving 100 particles is a very small task, meaning the overhead of creating these threads, dividing work, and coordinating them exceeds the benefit of parallel execution. I do not doubt whatsoever that if the actual program here was more computationally expensive, threading would be exponentionally more beneficial as usually it excels with large data sets rather than small quick operations.
 
 ## Lab F Reflection
+
+I enjoyed this lab because it serves as a good introduction to simulations in rust, and how threading can benefit/disadvantage the program. I liked working with thread pools as they just seem so much more intuitive what we have previously learnt with manually creating threads and controlling locking. I can definitely see this becoming a great asset when we move onto the more computationally expensive programs, as it is much less of a headache to set up and wrap my head around than before. I am still a bit baffled by the fact my threaded version was around 260x slower than my first approach, but I believe my explanation makes sense so I hope I have not missed anything or done something wrong. I am excited to see how thread pooling is expanded upon in bigger programs.
