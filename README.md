@@ -2185,9 +2185,11 @@ Average position of all particles: (5.04, 5.01)
 No, because movement and collision detection happen sequentially, not concurrently. Meaning, all of the particles do their movement, then the positions get checked. Furthermore, movement threads operate on seperate chunks of particles and the collision detection thread only reads the particle data.
 
 **Are there any other race conditions that can occur in your code?**
+
 No again because movement and collision detection happen sequentially, not concurrently.
 
 **Are there any optimisations you can make to your code?**
+
 Like I did, we could slightly improve performance by missing the square root, but in the grand scheme of things that barely makes a difference. The best way to improve performance is by limiting the amount of comparisons we have to make with the particles, ideally only checking the particles around the particle for their distance. If the particles had a set distance and couldnt move, we would be sorted, but in this case we could do something like only check distance between two particles if the distance between them on a single axis is below a certain threshold.
 
 ## Q2
