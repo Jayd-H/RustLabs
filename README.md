@@ -1895,3 +1895,835 @@ As you can see, the threaded version is actually performing much worse (17979412
 ## Lab F Reflection
 
 I enjoyed this lab because it serves as a good introduction to simulations in rust, and how threading can benefit/disadvantage the program. I liked working with thread pools as they just seem so much more intuitive what we have previously learnt with manually creating threads and controlling locking. I can definitely see this becoming a great asset when we move onto the more computationally expensive programs, as it is much less of a headache to set up and wrap my head around than before. I am still a bit baffled by the fact my threaded version was around 260x slower than my first approach, but I believe my explanation makes sense so I hope I have not missed anything or done something wrong. I am excited to see how thread pooling is expanded upon in bigger programs.
+
+# Lab G
+
+## Q1
+
+Make a copy of your `particle_threaded` project and name it `colliding_particle_threaded`
+
+Create a new function `collide()` that checks if a particle collides with (or is very close to) another particle.
+
+**Hint:** In terms of good object-oriented design, the `collide()` should be placed within the `Particle` class
+
+Create a new pool of threads with a new thread main. Within this thread main, you'll need to iterate over the list of particles calling your `collide()` function for each pair of particles.
+
+Now add a counter to count the number of collision that occur in your simulation. Initially, this counter can be local to the new thread main. Print this counter before the thread terminates.
+In the next exercise we'll replace this counter with an atomic.
+
+Limit the number of collision threads to one, until you are confident that your code is executing correctly.
+
+You should now have two sets of threads (collision and moves) that are accessing the same set of data. One reading the other writing.
+
+- Is locking required in your solution to prevent race conditions?
+- Are there any other race conditions that can occur in your code?
+- Are there any optimisations you can make to your code?
+
+## A1
+
+Following on from last week, I was able to copy my code and refine it for this lab. I removed the non-threaded code along with the comparison between them and stripped it down to its fundamentals. From there, I added a `collide()` function to my Particle.
+
+```Rust
+fn collide(&self, other: &Particle) -> bool {
+        let dx = self.x - other.x;
+        let dy = self.y - other.y;
+        let dsqr = dx * dx + dy * dy;
+
+        dsqr < 0.01
+    }
+```
+
+I opted to spare the square root for very slight performance gains, as this would be running many, many times a second. This function returns true when two particles are within a certain threshold of eachother. From here, we can make a `check_collisions_threaded();` function. This function creates a thread pool and iterates through every particle, checking it against every other particle. Because of the nested threads, no pair of particles would be checked twice. If it finds a collision when checking (`particle.collide()` returns true), it increments a counter. If at the end of the step the counter is above 0, it sends out a print statement of the amount of collisions at that particular step.
+
+```Rust
+fn check_collisions_threaded(&self, step: usize) -> usize {
+        let mut total_collisions = 0;
+        let mut pool = scoped_threadpool::Pool::new(1);
+
+        pool.scoped(|scope| {
+            let particles = &self.particles;
+            let collisions_ref = &mut total_collisions;
+
+            scope.execute(move || {
+                let mut step_collisions = 0;
+
+                for i in 0..particles.len() {
+                    for j in (i+1)..particles.len() {
+                        if particles[i].collide(&particles[j]) {
+                            step_collisions += 1;
+                        }
+                    }
+                }
+
+                *collisions_ref = step_collisions;
+                if step_collisions > 0 {
+                    println!("Step: {} - Collisions: {}", step, step_collisions,);
+                }
+            });
+        });
+
+        total_collisions
+    }
+```
+
+Because we return an integer from `check_collisions_threaded()`, for every step we run the function in our `run_simulation()`, we can sum up the total collisions after all the steps and print them at the end. Doing this also avoids using the atomic datatype which is not allowed in this section. This is the final code and the result for 100 steps so the console does not get too messy.
+
+```Rust
+// Lab G - Threaded Colliding Particle Sim
+// Jayden Holdsworth - 15/03/2025
+use rand;
+use scoped_threadpool;
+use std::time::Instant;
+
+const NUM_PARTICLES: usize = 100;
+const ENCLOSURE_SIZE: f32 = 10.0;
+const NUM_MOVEMENT_THREADS: usize = 4;
+const SIMULATION_STEPS: usize = 100;
+
+//* Particle Class */
+#[derive(Debug, Copy, Clone)]
+pub struct Particle {
+    x: f32,
+    y: f32,
+}
+
+impl Particle {
+    fn new(x: f32, y: f32) -> Self {
+        Particle { x, y }
+    }
+
+    fn collide(&self, other: &Particle) -> bool {
+        let dx = self.x - other.x;
+        let dy = self.y - other.y;
+        let dsqr = dx * dx + dy * dy;
+
+        dsqr < 0.01
+    }
+}
+
+//* Particle System Class */
+struct ParticleSystem {
+    particles: Vec<Particle>,
+}
+
+impl ParticleSystem {
+    fn new() -> Self {
+        let mut particles = Vec::with_capacity(NUM_PARTICLES);
+        // particles are created in a grid to avoid initial collisions
+        for i in 0..NUM_PARTICLES {
+            let row = i / 10;
+            let col = i % 10;
+
+            let x = (col as f32) * ENCLOSURE_SIZE / 10.0 + 0.5;
+            let y = (row as f32) * ENCLOSURE_SIZE / 10.0 + 0.5;
+
+            particles.push(Particle::new(x, y));
+        }
+
+        ParticleSystem {
+            particles,
+        }
+    }
+
+    fn move_particles_threaded(&mut self) {
+        let mut pool = scoped_threadpool::Pool::new(NUM_MOVEMENT_THREADS as u32);
+
+        let chunk_size = (NUM_PARTICLES + NUM_MOVEMENT_THREADS - 1) / NUM_MOVEMENT_THREADS;
+
+        pool.scoped(|scope| {
+            for chunk in self.particles.chunks_mut(chunk_size) {
+                scope.execute(move || {
+                    for particle in chunk {
+                        let dx = (rand::random::<f32>() - 0.5) * 0.2;
+                        let dy = (rand::random::<f32>() - 0.5) * 0.2;
+
+                        particle.x = f32::min(f32::max(particle.x + dx, 0.0), ENCLOSURE_SIZE);
+                        particle.y = f32::min(f32::max(particle.y + dy, 0.0), ENCLOSURE_SIZE);
+                    }
+                });
+            }
+        });
+    }
+
+    // checks for collisions between particles on a separate thread
+    fn check_collisions_threaded(&self, step: usize) -> usize {
+        let mut total_collisions = 0;
+        let mut pool = scoped_threadpool::Pool::new(1);
+
+        pool.scoped(|scope| {
+            let particles = &self.particles;
+            let collisions_ref = &mut total_collisions;
+
+            scope.execute(move || {
+                let mut step_collisions = 0;
+
+                for i in 0..particles.len() {
+                    for j in (i+1)..particles.len() {
+                        if particles[i].collide(&particles[j]) {
+                            step_collisions += 1;
+                        }
+                    }
+                }
+
+                *collisions_ref = step_collisions;
+                if step_collisions > 0 {
+                    println!("Step: {} - Collisions: {}", step, step_collisions,);
+                }
+            });
+        });
+
+        total_collisions
+    }
+
+    fn run_simulation(&mut self, steps: usize) {
+        println!("\nRunning simulation for {} steps...", steps);
+        let timer = Instant::now();
+        let mut total_collisions = 0;
+
+        for step in 1..=steps {
+            self.move_particles_threaded();
+
+            total_collisions += self.check_collisions_threaded(step);
+
+            if step % 100 == 0 {
+                println!("Completed {} steps", step);
+            }
+        }
+
+        let elapsed = timer.elapsed();
+        println!("Simulation complete. Total collisions: {}", total_collisions);
+        println!("Simulation took: {}.{:03} seconds", elapsed.as_secs(), elapsed.subsec_millis());
+    }
+}
+
+//* Main */
+fn main() {
+    let mut particle_system = ParticleSystem::new();
+
+    println!("Initial state - showing first 5 particles:");
+    for i in 0..5 {
+        println!("Particle {}: ({:.2}, {:.2})",
+                 i,
+                 particle_system.particles[i].x,
+                 particle_system.particles[i].y);
+    }
+
+    particle_system.run_simulation(SIMULATION_STEPS);
+
+    println!("\nFinal state - showing first 5 particles:");
+    for i in 0..5 {
+        println!("Particle {}: ({:.2}, {:.2})",
+                 i,
+                 particle_system.particles[i].x,
+                 particle_system.particles[i].y);
+    }
+
+    let avg_x = particle_system.particles.iter().map(|p| p.x).sum::<f32>() / NUM_PARTICLES as f32;
+    let avg_y = particle_system.particles.iter().map(|p| p.y).sum::<f32>() / NUM_PARTICLES as f32;
+    println!("\nAverage position of all particles: ({:.2}, {:.2})", avg_x, avg_y);
+}
+```
+
+Output:
+
+```
+Initial state - showing first 5 particles:
+Particle 0: (0.50, 0.50)
+Particle 1: (1.50, 0.50)
+Particle 2: (2.50, 0.50)
+Particle 3: (3.50, 0.50)
+Particle 4: (4.50, 0.50)
+
+Running simulation for 100 steps...
+Step: 34 - Collisions: 1
+Step: 37 - Collisions: 1
+Step: 41 - Collisions: 1
+Step: 43 - Collisions: 1
+Step: 58 - Collisions: 1
+Step: 63 - Collisions: 1
+Step: 64 - Collisions: 1
+Step: 68 - Collisions: 1
+Step: 69 - Collisions: 1
+Step: 70 - Collisions: 2
+Step: 71 - Collisions: 2
+Step: 72 - Collisions: 1
+Step: 73 - Collisions: 2
+Step: 74 - Collisions: 1
+Step: 78 - Collisions: 1
+Step: 79 - Collisions: 1
+Step: 80 - Collisions: 1
+Step: 83 - Collisions: 2
+Step: 84 - Collisions: 1
+Step: 85 - Collisions: 1
+Step: 86 - Collisions: 1
+Step: 87 - Collisions: 1
+Step: 88 - Collisions: 3
+Step: 89 - Collisions: 2
+Step: 90 - Collisions: 1
+Step: 91 - Collisions: 1
+Step: 94 - Collisions: 1
+Step: 95 - Collisions: 1
+Step: 96 - Collisions: 1
+Step: 99 - Collisions: 1
+Step: 100 - Collisions: 1
+Completed 100 steps
+Simulation complete. Total collisions: 38
+Simulation took: 0.036 seconds
+
+Final state - showing first 5 particles:
+Particle 0: (0.53, 0.87)
+Particle 1: (0.10, 1.72)
+Particle 2: (2.74, 1.07)
+Particle 3: (3.43, 0.48)
+Particle 4: (5.44, 0.49)
+
+Average position of all particles: (5.04, 5.01)
+```
+
+**Is locking required in your solution to prevent race conditions?**
+
+No, because movement and collision detection happen sequentially, not concurrently. Meaning, all of the particles do their movement, then the positions get checked. Furthermore, movement threads operate on seperate chunks of particles and the collision detection thread only reads the particle data.
+
+**Are there any other race conditions that can occur in your code?**
+No again because movement and collision detection happen sequentially, not concurrently.
+
+**Are there any optimisations you can make to your code?**
+Like I did, we could slightly improve performance by missing the square root, but in the grand scheme of things that barely makes a difference. The best way to improve performance is by limiting the amount of comparisons we have to make with the particles, ideally only checking the particles around the particle for their distance. If the particles had a set distance and couldnt move, we would be sorted, but in this case we could do something like only check distance between two particles if the distance between them on a single axis is below a certain threshold.
+
+## Q2
+
+Make a copy of your `colliding_particle_threaded` project and name it `colliding_particle_threaded_atomic`
+
+Replace the local counter with an atomic counter to measure the number of collisions across all threads. This counter should be stored only once in the ParticleSystem class.
+
+**Hint:** We covered atomic counters during the lecture in week 6
+
+Compare the results to your original collision counters. Is everything now working correctly?
+
+## A2
+
+Here we wil be implementing an atomic counter, rather than counting locally and adding it up every step. We first need to add a collision count to our particle system, initialising it as 0. Then, we can tweak our `check_collisions_threaded()` method to simply add 1 to this counter when collisions are detected. This means there is no need for messing about with passing through the local counted collisions to make a sum of the total. Here is the full code I ended up with:
+
+```Rust
+// Lab G - Threaded Colliding Particle Sim
+// Jayden Holdsworth - 15/03/2025
+
+use rand;
+use scoped_threadpool;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Instant;
+
+const NUM_PARTICLES: usize = 100;
+const ENCLOSURE_SIZE: f32 = 10.0;
+const NUM_MOVEMENT_THREADS: usize = 4;
+const SIMULATION_STEPS: usize = 1000;
+
+//* Particle Class */
+#[derive(Debug, Copy, Clone)]
+pub struct Particle {
+    x: f32,
+    y: f32,
+}
+
+impl Particle {
+    fn new(x: f32, y: f32) -> Self {
+        Particle { x, y }
+    }
+
+    fn collide(&self, other: &Particle) -> bool {
+        let dx = self.x - other.x;
+        let dy = self.y - other.y;
+        let dsqr = dx * dx + dy * dy;
+
+        dsqr < 0.01
+    }
+}
+
+//* Particle System Class */
+struct ParticleSystem {
+    particles: Vec<Particle>,
+    collision_count: AtomicUsize,
+}
+
+impl ParticleSystem {
+    fn new() -> Self {
+        let mut particles = Vec::with_capacity(NUM_PARTICLES);
+
+        // particles are created in a grid to avoid initial collisions
+        for i in 0..NUM_PARTICLES {
+            let row = i / 10;
+            let col = i % 10;
+
+            let x = (col as f32) * ENCLOSURE_SIZE / 10.0 + 0.5;
+            let y = (row as f32) * ENCLOSURE_SIZE / 10.0 + 0.5;
+
+            particles.push(Particle::new(x, y));
+        }
+
+        ParticleSystem {
+            particles,
+            collision_count: AtomicUsize::new(0),
+        }
+    }
+
+    fn move_particles_threaded(&mut self) {
+        let mut pool = scoped_threadpool::Pool::new(NUM_MOVEMENT_THREADS as u32);
+
+        let chunk_size = (NUM_PARTICLES + NUM_MOVEMENT_THREADS - 1) / NUM_MOVEMENT_THREADS;
+
+        pool.scoped(|scope| {
+            for chunk in self.particles.chunks_mut(chunk_size) {
+                scope.execute(move || {
+                    for particle in chunk {
+                        let dx = (rand::random::<f32>() - 0.5) * 0.2;
+                        let dy = (rand::random::<f32>() - 0.5) * 0.2;
+
+                        particle.x = f32::min(f32::max(particle.x + dx, 0.0), ENCLOSURE_SIZE);
+                        particle.y = f32::min(f32::max(particle.y + dy, 0.0), ENCLOSURE_SIZE);
+                    }
+                });
+            }
+        });
+    }
+
+    // checks for collisions between particles on a separate thread
+    fn check_collisions_threaded(&self) {
+        let mut pool = scoped_threadpool::Pool::new(1);
+
+        pool.scoped(|scope| {
+            let particles = &self.particles;
+            let collision_counter = &self.collision_count;
+
+            scope.execute(move || {
+                for i in 0..particles.len() {
+                    for j in (i+1)..particles.len() {
+                        if particles[i].collide(&particles[j]) {
+                            collision_counter.fetch_add(1, Ordering::Relaxed);
+                        }
+                    }
+                }
+            });
+        });
+    }
+
+    fn run_simulation(&mut self, steps: usize) {
+        println!("\nRunning simulation for {} steps...", steps);
+
+        let timer = Instant::now();
+        for step in 1..=steps {
+            self.move_particles_threaded();
+
+            self.check_collisions_threaded();
+
+            if step % 100 == 0 {
+                println!("Completed {} steps", step);
+            }
+        }
+        let elapsed = timer.elapsed();
+        println!("Simulation complete. Total collisions: {}",
+                 self.collision_count.load(Ordering::Relaxed));
+
+        println!("Simulation took: {}.{:03} seconds", elapsed.as_secs(), elapsed.subsec_millis());
+    }
+}
+
+//* Main */
+fn main() {
+    let mut particle_system = ParticleSystem::new();
+
+    println!("Initial state - showing first 5 particles:");
+    for i in 0..5 {
+        println!("Particle {}: ({:.2}, {:.2})",
+                 i,
+                 particle_system.particles[i].x,
+                 particle_system.particles[i].y);
+    }
+
+    particle_system.run_simulation(SIMULATION_STEPS);
+
+    println!("\nFinal state - showing first 5 particles:");
+    for i in 0..5 {
+        println!("Particle {}: ({:.2}, {:.2})",
+                 i,
+                 particle_system.particles[i].x,
+                 particle_system.particles[i].y);
+    }
+
+    let avg_x = particle_system.particles.iter().map(|p| p.x).sum::<f32>() / NUM_PARTICLES as f32;
+    let avg_y = particle_system.particles.iter().map(|p| p.y).sum::<f32>() / NUM_PARTICLES as f32;
+    println!("\nAverage position of all particles: ({:.2}, {:.2})", avg_x, avg_y);
+}
+```
+
+As you can see, only minor changes were necessary. I increased the step count to 1000 and got rid of the print statements for each collision as to not flood the console. Here is the output:
+
+```
+Initial state - showing first 5 particles:
+Particle 0: (0.50, 0.50)
+Particle 1: (1.50, 0.50)
+Particle 2: (2.50, 0.50)
+Particle 3: (3.50, 0.50)
+Particle 4: (4.50, 0.50)
+
+Running simulation for 1000 steps...
+Completed 100 steps
+Completed 200 steps
+Completed 300 steps
+Completed 400 steps
+Completed 500 steps
+Completed 600 steps
+Completed 700 steps
+Completed 800 steps
+Completed 900 steps
+Completed 1000 steps
+Simulation complete. Total collisions: 1365
+Simulation took: 0.335 seconds
+
+Final state - showing first 5 particles:
+Particle 0: (0.00, 4.26)
+Particle 1: (0.98, 0.56)
+Particle 2: (2.28, 2.92)
+Particle 3: (6.12, 1.21)
+Particle 4: (5.93, 1.44)
+```
+
+In theory, this atomic counter should be quicker than using a local one like we did before, as not only can we omit passing through the collision count every step, but we also reduce the extra calculations of adding up every steps count together. Then again, this quicker performance of 1000 steps compared to the 100 steps without the atomic counter can be chalked up to removing the print statements.
+
+## Q3
+
+Given the Rust ownership model, you have likely implemented Q1 as having a set of threads that move the particles, followed by a set of threads that test for collisions.
+
+Can you think of an approach where both sets of threads can execute at the same time?
+
+This might require some lateral thinking
+
+If you believe you have a solution, then attempt to implement it within Rust.
+
+It's not an impossible problem, and there are likely many solutions.
+
+## A3
+
+Funnily enough, before moving onto step three and reading the question, I had realised that I may have misinterpreted the original question as I have essentially just made two concurrent methods run sequentially. I started to work on a new solution for question 1 and 2 that involved both sets of threads executing at the same time, before I glanced over at question 3 and saw that this was expected behaviour. This is not relavent, I just thought it was amusing. Furthermore, this part is long and over-engineered.
+
+I looked online and consulted some friendly AI's to learn more about how to solve this issue and I think I chose a good solution.
+
+There are some core architectural differences between this implementation and the old one. The main difference that makes with concurrent is the inclusion of a double buffer. What this means is that we are essentially capturing two snapshots of the particles location, current step and next step. Collision detection exclusively happens on the current step snapshot, performing read-only operations on the particles location. Movement threads instead read from the current step snapshot, and writes it to a completely seperate place in memory in the next step snapshot. Since there are no concurrent writes to the same memory locations, locks would be redundant and thankfully are not needed. The only shared state that gets modified here is the atomic counter, but because its an atomic that handles it all for us. When all the particles have been checked, the nex step becomes the current step and the process begins again.
+
+You may be thinking right now "Yes, but this means that performance is still limited by the slowest denominator, the collision checking". This is why I have optimised it by adding a spatial grid. Our enclosure is now cut up into chunks. When a particle needs its collision detected, we can locate the chunk that it is in and only do distance calculations in the particle's chunk and the chunks surrounding it. We do it in the chunks around the main chunk in the event that two particles are cheeky and want to sit at the edge of their respective chunk, being close enough that its a collision, but because they are in different chunks it does not detect it.
+
+To further optimise this, we can add a pre-check for distance that uses single axis distance for a particle and it's neighbours. This ensures that the only particles we are checking are guaranteed to be close enough to eachother that they might have collided.
+
+Here is the full code I ended up with:
+
+```Rust
+// Lab G - Threaded Colliding Particle Sim SUPER THREADED
+// Jayden Holdsworth - 15/03/2025
+use rand;
+use scoped_threadpool::Pool;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Instant;
+
+const NUM_PARTICLES: usize = 100;
+const ENCLOSURE_SIZE: f32 = 10.0;
+const NUM_MOVEMENT_THREADS: usize = 4;
+const NUM_COLLISION_THREADS: usize = 4;
+const SIMULATION_STEPS: usize = 1000;
+const COLLISION_DISTANCE_SQR: f32 = 0.01;
+const CELL_SIZE: f32 = 0.5;
+const GRID_DIM: usize = (ENCLOSURE_SIZE / CELL_SIZE) as usize + 1;
+
+//* Particle Class */
+#[derive(Debug, Copy, Clone)]
+pub struct Particle {
+    x: f32,
+    y: f32,
+}
+
+impl Particle {
+    fn new(x: f32, y: f32) -> Self {
+        Particle { x, y }
+    }
+
+    fn collide(&self, other: &Particle) -> bool {
+        let dx = self.x - other.x;
+        let dy = self.y - other.y;
+        let dsqr = dx * dx + dy * dy;
+
+        dsqr < COLLISION_DISTANCE_SQR
+    }
+
+    fn get_cell_coords(&self) -> (usize, usize) {
+        let x_cell = (self.x / CELL_SIZE).min(GRID_DIM as f32 - 1.0) as usize;
+        let y_cell = (self.y / CELL_SIZE).min(GRID_DIM as f32 - 1.0) as usize;
+        (x_cell, y_cell)
+    }
+
+    fn might_collide(&self, other: &Particle) -> bool {
+        let dx = self.x - other.x;
+        let dy = self.y - other.y;
+
+        // quick check before full distance calculation
+        if dx.abs() > CELL_SIZE || dy.abs() > CELL_SIZE {
+            return false;
+        }
+
+        true
+    }
+}
+
+//* Spatial Grid Class */
+struct SpatialGrid {
+    cells: Vec<Vec<usize>>,
+}
+
+impl SpatialGrid {
+    fn new() -> Self {
+        let mut cells = Vec::with_capacity(GRID_DIM * GRID_DIM);
+        for _ in 0..(GRID_DIM * GRID_DIM) {
+            cells.push(Vec::new());
+        }
+
+        SpatialGrid { cells }
+    }
+
+    fn clear(&mut self) {
+        for cell in &mut self.cells {
+            cell.clear();
+        }
+    }
+
+    fn add_particle(&mut self, particle_idx: usize, particle: &Particle) {
+        let (x_cell, y_cell) = particle.get_cell_coords();
+        let cell_idx = y_cell * GRID_DIM + x_cell;
+        self.cells[cell_idx].push(particle_idx);
+    }
+
+    fn get_neighbor_indices(&self, particle: &Particle) -> Vec<usize> {
+        let (x_cell, y_cell) = particle.get_cell_coords();
+        let mut neighbors = Vec::new();
+
+        // check 3x3 neighborhood of cells
+        for dy in -1..=1 {
+            for dx in -1..=1 {
+                let nx = x_cell as isize + dx;
+                let ny = y_cell as isize + dy;
+
+                // Skip out-of-bounds cells
+                if nx < 0 || ny < 0 || nx >= GRID_DIM as isize || ny >= GRID_DIM as isize {
+                    continue;
+                }
+
+                let cell_idx = (ny as usize) * GRID_DIM + (nx as usize);
+                neighbors.extend(&self.cells[cell_idx]);
+            }
+        }
+
+        neighbors
+    }
+}
+
+//* Particle System Class */
+struct ParticleSystem {
+    current_particles: Vec<Particle>,
+    next_particles: Vec<Particle>,
+    spatial_grid: SpatialGrid,
+    collision_count: AtomicUsize,
+}
+
+impl ParticleSystem {
+    fn new() -> Self {
+        let mut current_particles = Vec::with_capacity(NUM_PARTICLES);
+
+        // Initialize particles in a grid pattern
+        for i in 0..NUM_PARTICLES {
+            let row = i / 10;
+            let col = i % 10;
+
+            let x = (col as f32) * ENCLOSURE_SIZE / 10.0 + 0.5;
+            let y = (row as f32) * ENCLOSURE_SIZE / 10.0 + 0.5;
+
+            current_particles.push(Particle::new(x, y));
+        }
+
+        // Create second buffer for double-buffering
+        let next_particles = current_particles.clone();
+
+        ParticleSystem {
+            current_particles,
+            next_particles,
+            spatial_grid: SpatialGrid::new(),
+            collision_count: AtomicUsize::new(0),
+        }
+    }
+
+    fn update_spatial_grid(&mut self) {
+        self.spatial_grid.clear();
+
+        for (idx, particle) in self.current_particles.iter().enumerate() {
+            self.spatial_grid.add_particle(idx, particle);
+        }
+    }
+
+    fn run_simulation_concurrent(&mut self, steps: usize) {
+        println!("\nRunning concurrent simulation for {} steps...", steps);
+        let timer = Instant::now();
+
+        let mut movement_pool = Pool::new(NUM_MOVEMENT_THREADS as u32);
+        let mut collision_pool = Pool::new(NUM_COLLISION_THREADS as u32);
+
+        for step in 1..=steps {
+            // update grid for collision detection
+            self.update_spatial_grid();
+
+            // move particles in parallel
+            movement_pool.scoped(|scope| {
+                let chunk_size = (NUM_PARTICLES + NUM_MOVEMENT_THREADS - 1) / NUM_MOVEMENT_THREADS;
+
+                for (thread_idx, chunk) in self.next_particles.chunks_mut(chunk_size).enumerate() {
+                    let current_particles = &self.current_particles;
+
+                    scope.execute(move || {
+                        for (i, particle) in chunk.iter_mut().enumerate() {
+                            let global_idx = thread_idx * chunk_size + i;
+                            if global_idx < current_particles.len() {
+                                // Copy from current state
+                                *particle = current_particles[global_idx];
+
+                                // Move the particle in next state
+                                let dx = (rand::random::<f32>() - 0.5) * 0.2;
+                                let dy = (rand::random::<f32>() - 0.5) * 0.2;
+
+                                particle.x = f32::min(f32::max(particle.x + dx, 0.0), ENCLOSURE_SIZE);
+                                particle.y = f32::min(f32::max(particle.y + dy, 0.0), ENCLOSURE_SIZE);
+                            }
+                        }
+                    });
+                }
+            });
+
+            // check collisions in parallel using spatial grid
+            collision_pool.scoped(|scope| {
+                let chunk_size = (NUM_PARTICLES + NUM_COLLISION_THREADS - 1) / NUM_COLLISION_THREADS;
+
+                for thread_idx in 0..NUM_COLLISION_THREADS {
+                    let current_particles = &self.current_particles;
+                    let spatial_grid = &self.spatial_grid;
+                    let collision_counter = &self.collision_count;
+
+                    scope.execute(move || {
+                        let start_idx = thread_idx * chunk_size;
+                        let end_idx = (start_idx + chunk_size).min(NUM_PARTICLES);
+
+                        if start_idx < end_idx {
+                            for i in start_idx..end_idx {
+                                let particle_i = &current_particles[i];
+
+                                // get nearby particles from grid
+                                let neighbors = spatial_grid.get_neighbor_indices(particle_i);
+
+                                for &j in &neighbors {
+                                    // skip self-comparison and duplicates
+                                    if i == j || j < i {
+                                        continue;
+                                    }
+
+                                    let particle_j = &current_particles[j];
+
+                                    // check for collision
+                                    if particle_i.might_collide(particle_j) && particle_i.collide(particle_j) {
+                                        collision_counter.fetch_add(1, Ordering::Relaxed);
+                                    }
+                                }
+                            }
+                        }
+                    });
+                }
+            });
+
+            // swap buffers for next step
+            std::mem::swap(&mut self.current_particles, &mut self.next_particles);
+
+            if step % 100 == 0 {
+                println!("Completed {} steps", step);
+            }
+        }
+
+        let elapsed = timer.elapsed();
+        println!("Simulation complete. Total collisions: {}",
+                 self.collision_count.load(Ordering::Relaxed));
+        println!("Simulation took: {}.{:03} seconds", elapsed.as_secs(), elapsed.subsec_millis());
+    }
+
+    fn print_state(&self, count: usize, prefix: &str) {
+        println!("\n{} - showing first {} particles:", prefix, count);
+        for i in 0..count.min(self.current_particles.len()) {
+            println!("Particle {}: ({:.2}, {:.2})",
+                    i,
+                    self.current_particles[i].x,
+                    self.current_particles[i].y);
+        }
+    }
+
+    fn print_statistics(&self) {
+        let avg_x = self.current_particles.iter().map(|p| p.x).sum::<f32>() / NUM_PARTICLES as f32;
+        let avg_y = self.current_particles.iter().map(|p| p.y).sum::<f32>() / NUM_PARTICLES as f32;
+        println!("\nAverage position of all particles: ({:.2}, {:.2})", avg_x, avg_y);
+    }
+}
+
+//* Main */
+fn main() {
+    let mut particle_system = ParticleSystem::new();
+
+    particle_system.print_state(5, "Initial state");
+
+    particle_system.run_simulation_concurrent(SIMULATION_STEPS);
+
+    particle_system.print_state(5, "Final state");
+    particle_system.print_statistics();
+
+    println!("\nConcurrent simulation completed successfully!");
+}
+```
+
+If we run this with 4 threads and 100 particles on an enclosure size of 10, here is what we get:
+
+```
+Initial state - showing first 5 particles:
+Particle 0: (0.50, 0.50)
+Particle 1: (1.50, 0.50)
+Particle 2: (2.50, 0.50)
+Particle 3: (3.50, 0.50)
+Particle 4: (4.50, 0.50)
+
+Running concurrent simulation for 1000 steps...
+Completed 100 steps
+Completed 200 steps
+Completed 300 steps
+Completed 400 steps
+Completed 500 steps
+Completed 600 steps
+Completed 700 steps
+Completed 800 steps
+Completed 900 steps
+Completed 1000 steps
+Simulation complete. Total collisions: 1200
+Simulation took: 0.072 seconds
+
+Final state - showing first 5 particles:
+Particle 0: (2.75, 0.59)
+Particle 1: (3.79, 1.78)
+Particle 2: (3.32, 3.02)
+Particle 3: (4.45, 3.40)
+Particle 4: (6.83, 0.68)
+
+Average position of all particles: (4.98, 4.81)
+```
+
+0.072 seconds is a drastic improvement over our previous version. For reference, our previous version with the same parameters took 0.215 seconds to complete, meaning we have improved our performance by ~3x. Ofcourse, this will never be a perfect comparison as we cannot control for the amount of collisions exactly but it does give a good idea.
+
+Where this approach will really be put to the test is when we increase the particle count to 10,000. For our previous version we get a time of 22.960 seconds, and for our new version we get a time of 11.430. Again, a drastic difference of double the performance
+
+## Lab G Reflection
+
+I am very pleased that I took the extra time to learn and really understand this lab so I can do the optional improved version. Despite this lab turning from an 1-2 hour job to a 5 hour job, I feel much more confident about how to implement effective concurrency and how to structure program architecture to let it shine. I believe that having this Lab has also improved my ability to understand the monumental effects that threading can bring to a program, even if it gets a little complicated. I have been thoroughly enjoying my time with Rust, and despite having some prior experience from before, I believe I am much more proficient in it now. I cannot wait to see how the things I have learnt and improved in get utilised for our big final assignemnt. If only the Cuda labs were like this.
