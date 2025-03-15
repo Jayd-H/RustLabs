@@ -1553,7 +1553,7 @@ fn main() {
 
 Here is a screenshot of the simulation window:
 
-![Particle Simulation Window](image.png)
+![Particle Simulation Window](images/particles.png)
 
 I will not be doing this for the next question as I am not in the mood to give it a go right now.
 
