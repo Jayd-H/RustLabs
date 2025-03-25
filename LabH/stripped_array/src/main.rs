@@ -1,5 +1,6 @@
 use std::sync::{Arc, Mutex};
-//use std::time::SystemTime;
+use std::time::SystemTime;
+use rand::Rng;
 
 struct Data {
     num_of_strips : usize,
@@ -40,13 +41,12 @@ impl Data {
 }
 
 fn main() {
-
     println!("Begin");
-
-    let num_of_threads = 2;
+    let num_of_threads = 128;
     let mut list_of_threads = vec!();
-    let shared_data = Arc::new(Data::new(num_of_threads, 16384));
 
+    let shared_data = Arc::new(Data::new(num_of_threads, 256));
+    
     for id in 0..num_of_threads {
         let data_clone = shared_data.clone();
         list_of_threads.push( std::thread::spawn( move || thread_main(id, data_clone) ) );
@@ -55,18 +55,34 @@ fn main() {
     for t in list_of_threads {
         t.join().unwrap();
     }
+    
+    //* To avoid timing the prints, we have to seperate the printing and the reading */
+    let start = SystemTime::now();
 
     for i in 0..shared_data.length_of_strip*shared_data.num_of_strips {
-        println! ("{} : {}", i, shared_data._read(i));
+        let _ = shared_data._read(i);
     }
 
+    let duration = start.elapsed().unwrap().as_micros();
+    println!("Read time: {} microseconds", duration);
+    
+
+    //* This part is just for the printing, but it clogs up the output */
+    //for i in 0..shared_data.length_of_strip*shared_data.num_of_strips {
+    //    println! ("{} : {}", i, shared_data._read(i));
+    //}
+    
     println!("End");
 }
 
 fn thread_main(id: usize, data: Arc<Data>) {
+    let mut rng = rand::rng();
+    
     for _i in 0..10 {
-        for _j in 0..data.length_of_strip*data.num_of_strips {
-            data.write(_j, id);
+        for _ in 0..data.length_of_strip*data.num_of_strips {
+            let array_size = data.length_of_strip * data.num_of_strips;
+            let index = rng.random_range(0..array_size);
+            data.write(index, id);
         }
     }
 }

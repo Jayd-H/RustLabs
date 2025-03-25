@@ -2727,3 +2727,395 @@ Where this approach will really be put to the test is when we increase the parti
 ## Lab G Reflection
 
 I am very pleased that I took the extra time to learn and really understand this lab so I can do the optional improved version. Despite this lab turning from an 1-2 hour job to a 5 hour job, I feel much more confident about how to implement effective concurrency and how to structure program architecture to let it shine. I believe that having this Lab has also improved my ability to understand the monumental effects that threading can bring to a program, even if it gets a little complicated. I have been thoroughly enjoying my time with Rust, and despite having some prior experience from before, I believe I am much more proficient in it now. I cannot wait to see how the things I have learnt and improved in get utilised for our big final assignemnt. If only the Cuda labs were like this.
+
+# Lab H
+
+## Q1
+
+Create a producer / consumer architecture using condition variables.
+
+A simple consumer / producer system was introduced during the lecture.
+
+Implement this simple system in Rust
+
+Now expand the example to work with multiple consumers and multiple producers.
+
+Assess the scalability of such an approach. Consider where you believe the bottlenecks to be, and how you could improve the overall performance.
+
+## A1
+
+We can create three objects, data, consumer, and producer. A consumer can only consume when there is data, a producer can only produce when there is no data. For this example, data is just a generic term, with their being one shared data object between all of the consumers and producers. Like a single slot. This data object has three methods, the constructor, consume and produce. The data object has an 'is_empty' bool that simply signifies if there is something there.
+
+For 10 times each, both the producer and consumer sleep for a random duration (simulating work), then the producer tries to produce and the consumer tries to consume. This is where the beauty of condition variables come in. Using condvar in Rust, we can effectively 'pause' a thread until work can be done, stopping both consumers and producers from busy waiting and constantly checking if they can proceed.
+
+When the program starts and the consumer tries to consume with `data.consume()`, if the data buffer is empty, the thread goes to sleep inside the `consume()` method, not returning to `consumer_main()` until it successfully consumes. When the producer tries to produce with `data.produce()`, if the data buffer is empty it sets it to full and then calls `notify_one`, which wakes up a sleeping consumer. This notification directly awakens a consumer thread that's sleeping in `consume()`. The sleeping consumer thread is now awakened and resumes execution, consuming the data and setting the buffer back to empty. When this happens, it calls `notify_one()` to wake up a sleeping producer, then returning to `consumer_main()`. This constant back and forth of alerting when resources are available is all possible through condvar, and is much for efficient than a looping check which would waste valuable CPU cycles.
+
+Here is the full code:
+
+```Rust
+// Lab H - Producer Consumer Problem
+// Jayden Holdsworth - 2025
+use std::sync::{Arc, Mutex, Condvar};
+use std::thread;
+use std::time::Duration;
+use rand::Rng;
+
+//* Data */
+struct Data {
+    is_empty: Mutex<bool>,
+    cv: Condvar,
+}
+
+impl Data {
+    fn new() -> Self {
+        Data {
+            is_empty: Mutex::new(true),
+            cv: Condvar::new(),
+        }
+    }
+
+    fn produce(&self) {
+        let mut is_empty = self.cv.wait_while(
+            self.is_empty.lock().unwrap(),
+            |is_empty| !*is_empty
+        ).unwrap();
+
+        *is_empty = false;
+        println!("Produced item");
+        self.cv.notify_one();
+    }
+
+    fn consume(&self) {
+        let mut is_empty = self.cv.wait_while(
+            self.is_empty.lock().unwrap(),
+            |is_empty| *is_empty
+        ).unwrap();
+
+        *is_empty = true;
+        println!("Consumed item");
+        self.cv.notify_one();
+    }
+}
+
+//* Consumer */
+fn consumer_main(data: Arc<Data>, id: usize) {
+    let mut rng = rand::rng();
+
+    for i in 0..10 {
+        thread::sleep(Duration::from_millis(rng.random_range(50..200)));
+        data.consume();
+        println!("Consumer {}: Consumed {}", id, i);
+    }
+}
+
+//* Producer */
+fn producer_main(data: Arc<Data>, id: usize) {
+    let mut rng = rand::rng();
+
+    for i in 0..10 {
+        thread::sleep(Duration::from_millis(rng.random_range(50..150)));
+        data.produce();
+        println!("Producer {}: Produced {}", id, i);
+    }
+}
+
+//* Main */
+fn main() {
+    let data = Arc::new(Data::new());
+    let mut handles = vec![];
+
+    let num_consumers = 3;
+
+    for id in 0..num_consumers {
+        let data_clone = Arc::clone(&data);
+        let handle = thread::spawn(move || {
+            consumer_main(data_clone, id);
+        });
+        handles.push(handle);
+    }
+
+    let num_producers = 3;
+    for id in 0..num_producers {
+        let data_clone = Arc::clone(&data);
+        let handle = thread::spawn(move || {
+            producer_main(data_clone, id);
+        });
+        handles.push(handle);
+    }
+
+    for handle in handles {
+        handle.join().unwrap();
+    }
+}
+```
+
+The main function simply initialises the data object, and creates 3 threads each for producers and consumers. Each producer and consumer only runs 10 times each as per the for loop.
+
+Output:
+
+```
+Produced item
+Producer 0: Produced 0
+Consumed item
+Consumer 0: Consumed 0
+Produced item
+Producer 1: Produced 0
+Consumed item
+Consumer 1: Consumed 0
+Produced item
+Producer 1: Produced 1
+Consumed item
+Consumer 1: Consumed 1
+Produced item
+Producer 2: Produced 0
+Consumed item
+Consumer 2: Consumed 0
+Produced item
+Producer 0: Produced 1
+Consumed item
+Consumer 0: Consumed 1
+Produced item
+Producer 1: Produced 2
+Consumed item
+Consumer 2: Consumed 1
+Produced item
+Producer 0: Produced 2
+Consumed item
+Consumer 1: Consumed 2
+Produced item
+Producer 2: Produced 1
+Consumed item
+Consumer 0: Consumed 2
+Produced item
+Producer 1: Produced 3
+Consumed item
+Consumer 1: Consumed 3
+Produced item
+Producer 0: Produced 3
+Consumed item
+Consumer 2: Consumed 2
+Produced item
+Producer 2: Produced 2
+Consumed item
+Consumer 0: Consumed 3
+Produced item
+Producer 2: Produced 3
+Consumed item
+Consumer 1: Consumed 4
+Produced item
+Producer 0: Produced 4
+Consumed item
+Consumer 2: Consumed 3
+Produced item
+Producer 1: Produced 4
+Consumed item
+Consumer 1: Consumed 5
+Produced item
+Producer 2: Produced 4
+Consumed item
+Consumer 0: Consumed 4
+Produced item
+Producer 1: Produced 5
+Consumed item
+Consumer 2: Consumed 4
+Produced item
+Producer 0: Produced 5
+Consumed item
+Consumer 0: Consumed 5
+Produced item
+Producer 2: Produced 5
+Consumed item
+Consumer 1: Consumed 6
+Produced item
+Producer 1: Produced 6
+Consumed item
+Consumer 2: Consumed 5
+Produced item
+Producer 0: Produced 6
+Consumed item
+Consumer 1: Consumed 7
+Produced item
+Producer 1: Produced 7
+Consumed item
+Consumer 1: Consumed 8
+Produced item
+Producer 2: Produced 6
+Consumed item
+Consumer 0: Consumed 6
+Produced item
+Producer 0: Produced 7
+Consumed item
+Consumer 2: Consumed 6
+Produced item
+Producer 1: Produced 8
+Consumed item
+Consumer 0: Consumed 7
+Produced item
+Producer 2: Produced 7
+Consumed item
+Consumer 2: Consumed 7
+Produced item
+Producer 0: Produced 8
+Consumed item
+Consumer 1: Consumed 9
+Produced item
+Producer 1: Produced 9
+Consumed item
+Consumer 0: Consumed 8
+Produced item
+Producer 0: Produced 9
+Consumed item
+Consumer 2: Consumed 8
+Produced item
+Producer 2: Produced 8
+Consumed item
+Consumer 0: Consumed 9
+Produced item
+Producer 2: Produced 9
+Consumed item
+Consumer 2: Consumed 9
+```
+
+Note that when it prints something like "Consumer 2: Consumed 9", that is a local variable for that specific consumer. In this case, that is the 10th time they specifically have consumed, it is not a global index of the data that is being produced. Thats why the numbers seem to repeat in the output. To comment on scalability, this single slot buffer is just inherently innefficient. The easiest way to make this more efficient is to increase it to something like a triple-slot buffer so that each consumer/producer pair basically has their own buffer so they are not waiting ages to write to it.
+
+## Q2
+
+Open the example program `striped_array`. This is very similar to the example code introduced in the lectures. Examine the code, so that you understand how it is implemented.
+
+Add timing code to the example to measure the duration of array access. Be careful to avoid timing the print statements.
+
+Also remember to use **release** mode when timing your code (i.e. `cargo run --release`). Timing in standard (debug) mode is pointless, due to the amount of debug code injected automatically by the compiler.
+
+You may find this useful
+
+```Rust
+ let start = SystemTime::now();
+ ...
+ start.elapsed().unwrap().as_micros();
+```
+
+Alter the program to use 2, 4, 8, 16, 32 threads. As the number of threads increases you'll need to half the size of the strips i.e. 16384, 8192, 4096, 2048, ....
+
+What do you notice about increasing the number of threads?
+
+## A2
+
+To avoid timing the prints, we have to seperate the printing from the reading from the `Main()` function.
+
+```Rust
+fn main() {
+    println!("Begin");
+    let num_of_threads = 2;
+    let mut list_of_threads = vec!();
+
+    let shared_data = Arc::new(Data::new(num_of_threads, 16384));
+
+    for id in 0..num_of_threads {
+        let data_clone = shared_data.clone();
+        list_of_threads.push( std::thread::spawn( move || thread_main(id, data_clone) ) );
+    }
+
+    for t in list_of_threads {
+        t.join().unwrap();
+    }
+
+    //* To avoid timing the prints, we have to seperate the printing and the reading */
+    let start = SystemTime::now();
+
+    for i in 0..shared_data.length_of_strip*shared_data.num_of_strips {
+        let _ = shared_data._read(i);
+    }
+
+    let duration = start.elapsed().unwrap().as_micros();
+    println!("Read time: {} microseconds", duration);
+
+
+    //* This part is just for the printing, but it clogs up the output */
+    //for i in 0..shared_data.length_of_strip*shared_data.num_of_strips {
+    //    println! ("{} : {}", i, shared_data._read(i));
+    //}
+
+    println!("End");
+}
+```
+
+When we do this and run the program in release mode, we get a read time of 106 microseconds (Ryzen 7 7800X3D).
+
+```
+Begin
+Read time: 106 microseconds
+End
+```
+
+We can alter the amount of threads used, and therefore the more partions that the array has, and measure the performance. Here is a nifty table
+
+| Threads | Strip Size | Microseconds |
+| ------- | ---------- | ------------ |
+| 2       | 16384      | 103          |
+| 4       | 8192       | 104          |
+| 8       | 4096       | 102          |
+| 16      | 2048       | 102          |
+| 32      | 1024       | 103          |
+| 64      | 512        | 102          |
+| 128     | 256        | 103          |
+
+I can see by the next question that the performance is meant to suffer when we add more threads which does make sense because it takes a bit of time to initalise new threads. For some reason on my machine this is not the case, but that might be due to some wacky CPU architecture thats optimising something on my machine. I understand the premise though.
+
+## Q3
+
+Our implementation of striped arrays suffers in terms of performance when we add more threads. This is due to the partly to the way the test code has been implemented i.e it uses sequential access.
+
+Replace
+
+```Rust
+data.write(j, id);
+```
+
+with
+
+```Rust
+let index = rand::random::<usize>() % data.length_of_strip*data.num_of_strips;
+data.write(index, id);
+```
+
+This code now simulates random access to the our array.
+
+Re-run your performance tests. What are the results ?
+
+## A3
+
+Striped arrays excel at finding specific indexs in large arrays because it is kind of like a binary search. To let us select a random index, we change our `thread_main()` to this:
+
+```Rust
+fn thread_main(id: usize, data: Arc<Data>) {
+    let mut rng = rand::rng();
+
+    for _i in 0..10 {
+        for _ in 0..data.length_of_strip*data.num_of_strips {
+            let array_size = data.length_of_strip * data.num_of_strips;
+            let index = rng.random_range(0..array_size);
+            data.write(index, id);
+        }
+    }
+}
+```
+
+The provided fix did not seem to be working. Here is a nice table showing timing results.
+
+| Threads | Strip Size | Microseconds |
+| ------- | ---------- | ------------ |
+| 2       | 16384      | 104          |
+| 4       | 8192       | 103          |
+| 8       | 4096       | 103          |
+| 16      | 2048       | 102          |
+| 32      | 1024       | 103          |
+| 64      | 512        | 128          |
+| 128     | 256        | 102          |
+
+The 64 threads is a bit of an outlier, but other than that, the results are largely the same. I question whether or not I am timing accurately or whether my CPU is just not fit for an experiment like this.
+
+## Lab H Reflection
+
+Through the lab I have strengthened my ability with understanding conditional variables and striped arrays. I really like striped arrays and I believe they would have some good use for our final lab. From my understanding, the final lab is a cloth simulation, and what is a cloth simulation except a lot of verticies in a 3D space that displace one another. Therefore there might be some cool way to program a way with condvar to only lock specific verticies to be checked or something. I might be wrong but I will look up more about it because I am intrigued at its extended use cases.
+
+Regarding striped arrays, I am a little upset that I was not seeing the so-called expected results of the performance decreasing as thread count increases. This assessment makes sense, as creating threads does involve more overhead for the entire program. Furthermore, I am a bit upset that the random access section of the striped array did not have different results as the previous section. Overall, I am quite pleased with this lab alltogether.
